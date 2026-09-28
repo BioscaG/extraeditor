@@ -31,6 +31,12 @@ python -c "from montaje import ffmpeg; print(ffmpeg.capability_report())"
 Silicon (or `faster-whisper` elsewhere). Without it, captions have no words and are
 silently omitted rather than rendered empty.
 
+**Semantic analysis.** Set `GEMINI_API_KEY` and run `montaje analyze --semantic` to log
+what is *in* each clip. This is the single biggest quality lever in the system: without
+it the planner ranks footage on sharpness, steadiness and motion only, so selection is
+arbitrary within the technically sound material. It is also the only paid per-asset step,
+so results are cached by `(asset, model, prompt version)`.
+
 ## A full pass
 
 ```bash
@@ -87,7 +93,7 @@ useful ones:
 |---|---|
 | §6–8 workspace, folder source, ingest, HDR | done |
 | §9 local analysis | shots, quality, occlusion, motion, audio events, VAD, ASR, loudness, colour stats. Missing: embeddings, subjects, sync, dedupe, separation |
-| §10 semantic clip logs | not started |
+| §10 semantic clip logs | implemented; needs `GEMINI_API_KEY`. Untested against the live API |
 | §13–15 craft library, tokens, colour pipeline | tokens and 6 components; catalogue is a fraction of §13.3 |
 | §14 music editing, mix, SFX | beats, structure, fit-to-duration, spotting, mix, stems. Missing: lyrics, generation |
 | §17–18 EditPlan, ops, rails, rhythm | done |

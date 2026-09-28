@@ -38,6 +38,19 @@ from montaje.models.style import Style
 from montaje.music.edit import MusicFit
 from montaje.music.structure import MusicStructure
 
+# How much a semantically logged moment outranks a merely usable range.
+MOMENT_WEIGHT = 1.2
+# Extra weight per moment kind. A hero shot is what an edit is built around; a
+# transition candidate is only useful at a boundary, so it gets no general bonus.
+KIND_BONUS = {
+    "hero": 0.35,
+    "highlight": 0.2,
+    "reaction": 0.18,
+    "quote": 0.12,
+    "scenic": 0.05,
+    "transition_candidate": 0.0,
+}
+
 # The shortest candidate range worth considering at all.
 MIN_SHOT_S = 0.4
 # Floor for a generated shot. Must be >= the rails' `min_shot_s`, or the builder
@@ -62,10 +75,18 @@ class Candidate:
     aesthetic: int = 3
     us_present: bool = False
     label: str = ""
+    # From a semantic clip log, when one exists. `moment_score` is the model's own
+    # recommendation strength; `moment_kind` says what sort of moment it identified.
+    moment_score: float = 0.0
+    moment_kind: str = ""
 
     @property
     def duration_s(self) -> float:
         return self.t1 - self.t0
+
+    @property
+    def is_moment(self) -> bool:
+        return self.moment_score > 0.0
 
     def score(self, want_energy: float) -> float:
         """Rank for a target energy, 0–1. Higher is a better fit."""
@@ -73,12 +94,17 @@ class Candidate:
         # because a calm intro needs calm footage.
         energy_fit = 1.0 - abs(self.energy / 5.0 - want_energy)
         people = 0.15 if self.us_present else 0.0
-        return (
+        base = (
             0.30 * self.quality
             + 0.25 * (self.aesthetic / 5.0)
             + 0.30 * energy_fit
             + people
         )
+        # A logged moment is the only evidence available that a range is *interesting*
+        # rather than merely technically sound, so it dominates the ranking. Without
+        # semantic analysis every usable range scores the same on this axis and
+        # selection is effectively arbitrary within the sharp, steady material.
+        return base + MOMENT_WEIGHT * self.moment_score + KIND_BONUS.get(self.moment_kind, 0.0)
 
 
 @dataclass
@@ -127,7 +153,19 @@ def collect_candidates(inputs: BuildInputs) -> list[Candidate]:
         speech = [e for e in events if e.analyzer.startswith("vad") and e.type == "speech"]
         words = [e for e in events if e.analyzer.startswith("asr") and e.type == "word"]
 
-        for span in usable:
+        # Logged moments become candidates in their own right, alongside the usable
+        # spans, so the planner can pick "the thing that happens" rather than "a stretch
+        # of sharp footage that happens to contain it".
+        spans: list[tuple[float, float, float, str]] = [
+            (e.t0, e.t1, 0.0, "") for e in usable
+        ]
+        if log is not None:
+            for moment in log.moments:
+                spans.append((moment.t0, moment.t1, moment.score, moment.kind.value))
+
+        for span_t0, span_t1, moment_score, moment_kind in spans:
+            span = Event(asset_id=asset_id, analyzer="span@0", type="span",
+                         t0=span_t0, t1=span_t1)
             if span.t1 - span.t0 < MIN_SHOT_S:
                 continue
             inner = [m for m in metrics if m.t0 >= span.t0 - 1 and m.t1 <= span.t1 + 1]
@@ -150,6 +188,8 @@ def collect_candidates(inputs: BuildInputs) -> list[Candidate]:
                 aesthetic=log.aesthetic if log else 3,
                 us_present=log.people.us_present if log else False,
                 label=log.summary[:80] if log else "",
+                moment_score=moment_score,
+                moment_kind=moment_kind,
             ))
     return out
 

@@ -264,7 +264,8 @@ def test_every_public_tool_is_catalogued():
     catalogued = {entry["name"] for entry in tools.tool_catalog()}
     expected = {
         "project_overview", "list_footage", "search_footage", "get_events",
-        "get_clip_log", "contact_sheet", "music_structure", "library_search",
+        "get_clip_log", "semantic_status", "contact_sheet", "music_structure",
+        "library_search",
         "library_get", "sfx_search", "get_style", "build_baseline_plan", "plan_get",
         "plan_apply", "plan_validate", "rhythm_report", "render_preview",
         "write_summary", "ask_user",

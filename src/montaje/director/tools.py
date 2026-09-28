@@ -236,6 +236,33 @@ def get_events(session: Session, asset_id: str, analyzer: str | None = None,
     }
 
 
+def semantic_status(session: Session) -> dict[str, Any]:
+    """Whether semantic analysis is available and how much of the footage it covers.
+
+    Worth checking first: without clip logs the planner ranks footage on sharpness and
+    motion only, so selection is arbitrary within the technically sound material, and the
+    agent should know that before trusting `search_footage`.
+    """
+    from montaje.analysis.semantic.clip_log import semantic_config
+    from montaje.analysis.semantic.gemini_client import available
+
+    scfg = semantic_config(session.cfg)
+    with session.store() as store:
+        assets = store.list_assets()
+        logged = sum(1 for a in assets if store.get_clip_log(a.asset_id) is not None)
+    return {
+        "available": available(scfg),
+        "model": scfg.model,
+        "assets": len(assets),
+        "with_clip_logs": logged,
+        "note": (
+            "Run `montaje analyze --semantic` to log clips."
+            if logged < len(assets)
+            else "All assets logged."
+        ),
+    }
+
+
 def get_clip_log(session: Session, asset_id: str) -> dict[str, Any]:
     with session.store() as store:
         log = store.get_clip_log(asset_id)
@@ -618,6 +645,7 @@ def tool_catalog() -> list[dict[str, str]]:
         {"name": "search_footage", "purpose": "ranked usable moments"},
         {"name": "get_events", "purpose": "raw analyzer events for one asset"},
         {"name": "get_clip_log", "purpose": "semantic clip log"},
+        {"name": "semantic_status", "purpose": "is semantic analysis available and applied"},
         {"name": "contact_sheet", "purpose": "frame grid for a range"},
         {"name": "music_structure", "purpose": "tempo, grid, sections, duration fit"},
         {"name": "library_search", "purpose": "components by query/kind/energy"},

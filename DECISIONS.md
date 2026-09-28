@@ -457,3 +457,53 @@ carried the model's `center` default, so subject detection ran, produced correct
 and was then ignored. The render looked plausible — the frame was filled edge to edge —
 which is what made it hard to notice: the failure mode of a mis-wired reframe is not a
 crash but a subtly worse composition.
+
+---
+
+## 2026-09-28 — Semantic timestamps are validated and snapped, never clamped
+
+**Decision:** `validate_log` snaps a model timestamp to the nearest deterministic boundary
+within 0.6 s (shot edges, occlusion edges, speech edges, word edges), and **discards**
+anything outside the clip rather than clamping it into range.
+
+**Evidence:** §2.2 is the rule the whole system rests on — the model picks moments, code
+picks frames — because a VLM samples video at a few frames per second and its timings
+drift. Discarding rather than clamping is the important half: a moment the model placed
+past the end of the clip is evidence it was guessing, and clamping that guess to the clip
+end converts it into a shot the editor is asked to trust. Sub-frame overshoot is tolerated,
+since that is rounding rather than invention. A moment that collapses because both ends
+snapped to the same boundary is extended to a minimum length instead of dropped — the model
+did observe something there.
+
+---
+
+## 2026-09-28 — The prompt carries the local analysis, and names no convention
+
+**Decision:** every clip-log prompt includes a CONTEXT block with the shot boundaries,
+usable spans, occlusion edges, speech spans, audio labels and transcript, and instructs the
+model to prefer those timings over its own. `PROMPT_VERSION` is part of the cache key.
+
+**Evidence:** grounding turns "guess when this happened" into "choose among these instants",
+which is a far easier task and the reason snapping usually finds a target within its window.
+A test asserts no prompt contains the words *festival*, *hand*, *lens*, *vlog* or
+*aftermovie*: §2.5 requires conventions to be discovered from patterns across the footage
+and confirmed by the user, and a prompt that names one would find it in footage that does
+not contain it. Versioning the prompt in the cache key means rewording a question
+invalidates the answers rather than mixing outputs from two different questions — this is
+the only paid per-asset step, so the key has to be exactly right in both directions.
+
+---
+
+## 2026-09-28 — A logged moment outranks a technically better non-moment
+
+**Decision:** `Candidate.score` adds `1.2 × moment_score` plus a per-kind bonus (hero 0.35,
+highlight 0.20, reaction 0.18, quote 0.12, scenic 0.05, transition candidate 0.00). Logged
+moments become candidates alongside the usable spans rather than replacing them.
+
+**Evidence:** a semantic moment is the only evidence available that a range is *interesting*
+rather than merely sharp and steady. Weighted this way, a logged hero moment with mediocre
+technical quality scores 2.06 against 0.77 for a technically perfect non-moment — which is
+the intended ordering, because an edit made of flawless shots of nothing is worse than one
+made of slightly soft shots of something. Transition candidates earn no general bonus
+because they are only useful at a boundary. Keeping the usable spans as candidates means a
+clip the model logged no moments in is still available rather than excluded.

@@ -53,10 +53,13 @@ actually share") is unmet no matter what the tests say.
 These are things the evaluator should not be surprised by, because they are known rather
 than discovered:
 
-- **No semantic analysis yet.** Without Gemini clip logs (§10) the planner ranks footage
-  on sharpness, steadiness and motion only. It cannot tell a hero moment from a shot of
-  the floor, so *selection* — the thing that most separates a good edit from a bad one —
-  is effectively random within the usable material. Expect story and hook to score low.
+- **Semantic analysis needs an API key and has not run against the live API.** With
+  `GEMINI_API_KEY` set, `montaje analyze --semantic` logs each clip and the planner then
+  ranks logged moments far above merely usable ranges. Without it, footage is ranked on
+  sharpness, steadiness and motion only — it cannot tell a hero moment from a shot of the
+  floor, so *selection*, the thing that most separates a good edit from a bad one, is
+  arbitrary within the technically sound material. **Score an edit with clip logs before
+  concluding anything about story or hook.**
 - **Reframing is implemented but unvalidated on faces.** Shots are cropped onto the
   subject rather than letterboxed. The detector combines detail, skin tone and
   subject-relative motion, and locates a synthetic subject to within 0.02 of its true

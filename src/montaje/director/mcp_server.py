@@ -103,6 +103,13 @@ def build_server(workspace: Workspace) -> MCPServer:
         return tools.get_clip_log(session, asset_id)
 
     @server.tool()
+    def semantic_status() -> dict[str, Any]:
+        """Whether semantic clip logs exist. Check this early: without them, footage is
+        ranked on sharpness and motion only and `search_footage` cannot tell a hero
+        moment from a shot of the floor."""
+        return tools.semantic_status(session)
+
+    @server.tool()
     def contact_sheet(asset_id: str, t0: float = 0.0, t1: float | None = None,
                       columns: int = 5) -> dict[str, Any]:
         """Render a frame grid for a range and return its path, so you can look at
