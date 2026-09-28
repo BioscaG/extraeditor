@@ -63,11 +63,17 @@ class Grade:
 
 
 def grade_from_style(policy: ColorPolicy, lut_dir: Path | None = None) -> Grade:
-    """Build a Grade from a style's color policy, resolving the LUT path."""
+    """Build a Grade from a style's color policy, resolving the LUT path.
+
+    Grain and vignette are deliberately *not* included: finishing is applied once over the
+    whole composition (including the text), by `finishing.finish`. Applying grain per shot
+    here as well would double it, and grain under the captions but not over them reads as
+    two images composited together.
+    """
     lut: Path | None = None
     if policy.lut and lut_dir is not None:
         candidate = lut_dir / policy.lut
         # A missing LUT falls back to no LUT rather than failing the render: the
         # style is data and may reference a LUT this install does not have.
         lut = candidate if candidate.is_file() else None
-    return Grade(lut=lut, grain=policy.grain)
+    return Grade(lut=lut)

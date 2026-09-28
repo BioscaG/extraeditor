@@ -202,6 +202,7 @@ def render(
         plan, resolved,
         bpm=grid.bpm if grid else 120.0,
         palette=_palette_for(style),
+        finishing=_finishing_for(style),
     )
     silent = ws.intermediates_dir / f"picture_v{plan.version:03d}.mp4"
     remotion.render_video(props, silent, quality=quality, public_dir=ws.intermediates_dir)
@@ -321,3 +322,23 @@ def _subject_centers(
         ]
         out[shot.id] = center_for_range(subject_events, shot.src_in, shot.src_out)
     return out
+
+
+def _finishing_for(style) -> dict | None:
+    """Finishing parameters for the composition, or None when the style asks for none.
+
+    Grain and vignette could be ffmpeg filters, but they live with halation so the whole
+    finishing pass is one layer with one set of parameters rather than split across two
+    stages that have to be kept consistent.
+    """
+    if style is None:
+        return None
+    policy = style.color
+    if max(policy.grain, policy.vignette, policy.halation) <= 0.001:
+        return None
+    return {
+        "grain": policy.grain,
+        "vignette": policy.vignette,
+        "halation": policy.halation,
+        "halationWarmth": policy.halation_warmth,
+    }

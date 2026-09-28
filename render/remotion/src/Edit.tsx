@@ -15,6 +15,7 @@
 import React from "react";
 import { AbsoluteFill, OffthreadVideo, Sequence, staticFile, useVideoConfig } from "remotion";
 import { registry, resolve } from "../../../library/components";
+import Finish from "../../../library/components/finishing/Finish";
 import type { ComponentContext } from "../../../library/components/contract";
 import { resolve as resolveTiming } from "../../../library/tokens/timing";
 import type { ComponentRef, Edit, ResolvedShot, Shot } from "./schema";
@@ -45,8 +46,12 @@ export const EditComposition: React.FC<Edit> = (edit) => {
     });
 
   const baseCtx = { width, height, fps, bpm: edit.bpm };
+  const totalFrames = Math.max(
+    1,
+    ...pairs.map(({ shot, resolved }) => shot.timeline_in + resolved.duration_in_frames),
+  );
 
-  return (
+  const picture = (
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       {pairs.map(({ shot, resolved }, index) => {
         const transition = shot.transition_in ?? null;
@@ -107,6 +112,18 @@ export const EditComposition: React.FC<Edit> = (edit) => {
         );
       })}
     </AbsoluteFill>
+  );
+
+  // Finishing wraps everything, including the text: grain over the picture but not over
+  // the captions would read as two different images composited together.
+  if (!edit.finishing) return picture;
+  return (
+    <Finish
+      ctx={{ ...baseCtx, frame: 0, durationInFrames: totalFrames }}
+      params={edit.finishing}
+    >
+      {picture}
+    </Finish>
   );
 };
 

@@ -30,6 +30,11 @@ class ColorPolicy(BaseModel):
     lut: str | None = None
     normalize_strength: float = 0.7
     grain: float = 0.0
+    vignette: float = 0.0
+    # Bloom around highlights. Applied in the composition, not by ffmpeg: it needs a
+    # blurred, threshold-masked copy of the frame composited back over itself.
+    halation: float = 0.0
+    halation_warmth: float = 0.6
 
 
 class ReframePolicy(BaseModel):

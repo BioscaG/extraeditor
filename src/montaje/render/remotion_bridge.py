@@ -114,6 +114,7 @@ def build_props(
     *,
     bpm: float = 120.0,
     palette: str = "neutral",
+    finishing: dict | None = None,
 ) -> dict:
     """The Remotion input props: the plan's render-relevant fields plus intermediates."""
     return {
@@ -153,6 +154,7 @@ def build_props(
         "bpm": bpm,
         "resolved": [r.to_json() for r in resolved],
         "palette": palette,
+        "finishing": finishing,
     }
 
 
@@ -182,6 +184,9 @@ def render_video(
     """
     check_available()
     preset = QUALITY_PRESETS[quality]
+    # Absolute: the renderer runs with its cwd inside render/remotion, so a relative
+    # destination would be written there instead of where the caller asked.
+    dest = dest.resolve()
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     # Props go via a file: a 100-shot plan's JSON exceeds the shell's argument limit.
@@ -240,6 +245,7 @@ def render_gallery_item(
 ) -> Path:
     """Render one component × preset × aspect ratio for the gallery (§13.4)."""
     check_available()
+    dest = dest.resolve()
     dest.parent.mkdir(parents=True, exist_ok=True)
     props = {
         "componentId": component_ref,

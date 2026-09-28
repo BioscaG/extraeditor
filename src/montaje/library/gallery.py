@@ -33,6 +33,8 @@ SAMPLE_PROPS: dict[str, dict] = {
         ]
     },
     "shot_fx.beat_pulse": {"beats": [0.0, 0.5, 1.0, 1.5, 2.0]},
+    "shot_fx.impact_shake": {"at": [0.2, 1.0, 1.6]},
+    "text.stamp": {"primary": "18:40", "secondary": "MAIN STAGE"},
 }
 
 ASPECT_SIZES = {

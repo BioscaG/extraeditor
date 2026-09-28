@@ -205,7 +205,14 @@ def test_grade_from_style_ignores_a_missing_lut(tmp_path):
     """A style is data and may reference a LUT this install does not have."""
     grade = grade_from_style(ColorPolicy(lut="nonexistent.cube", grain=0.1), lut_dir=tmp_path)
     assert grade.lut is None
-    assert grade.grain == 0.1
+
+
+def test_grade_from_style_leaves_finishing_to_the_composition():
+    """Grain per shot *and* over the composition would double it, and grain under the
+    captions but not over them reads as two images composited together."""
+    grade = grade_from_style(ColorPolicy(grain=0.2, vignette=0.3))
+    assert grade.grain == 0.0
+    assert grade.vignette == 0.0
 
 
 def test_grade_from_style_resolves_an_existing_lut(tmp_path):

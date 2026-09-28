@@ -15,9 +15,14 @@ pacing:
   on_grid_ratio: 0.75
 
 transitions:
+  # Ordered by how often they should appear. The dip is first because it is the one
+  # designed transition that survives repetition; the wipe is last because it only reads
+  # well on a discovered occlusion motif.
   palette:
-    - transition.whip_pan
+    - transition.dip
     - transition.zoom_punch
+    - transition.whip_pan
+    - transition.luma_wipe
   # Two per ten seconds. Designed transitions are punctuation, not grammar; the hard
   # cut carries everything else.
   max_per_10s: 2.0
@@ -29,12 +34,18 @@ sfx:
 text:
   captions: text.captions_word_pop
   titles: text.kinetic_title
-  stamps: false
+  stamps: true
 
 color:
   lut: null
   normalize_strength: 0.7
-  grain: 0.12
+  # Finishing, applied once over the whole composition (text included) rather than per
+  # shot. Kept below the threshold of notice: visible grain and a visible vignette are the
+  # two clearest signs of a first-time colourist.
+  grain: 0.1
+  vignette: 0.2
+  halation: 0.3
+  halation_warmth: 0.6
 
 reframe:
   policy: auto_subject

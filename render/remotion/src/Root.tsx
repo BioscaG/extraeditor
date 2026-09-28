@@ -24,6 +24,7 @@ const FALLBACK = {
   bpm: 120,
   resolved: [],
   palette: "neutral" as const,
+  finishing: null,
 };
 
 export const RemotionRoot: React.FC = () => (

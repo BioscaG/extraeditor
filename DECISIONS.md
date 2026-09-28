@@ -598,3 +598,58 @@ when no log exists makes the planner optimize the same quantity the report score
 takes the correlation from **-0.07 to +0.49** on the fixture shoot — the busiest footage now
 lands in the loudest section. A logged energy still wins where one exists, because that is a
 judgement about the content and motion is only a proxy for it.
+
+---
+
+## 2026-09-28 — Finishing is a Remotion component, not an ffmpeg filter
+
+**Decision:** grain, vignette and halation are applied once by `finishing.finish` over the
+whole composition — text included — and `grade_from_style` no longer emits grain or
+vignette.
+
+**Alternatives:** ffmpeg's `noise` and `vignette` filters in the conform, which is where
+they started (§30 lists this as an open decision).
+
+**Evidence:** **halation** decides it. Bloom around highlights is what makes digital
+footage read as filmed, and doing it properly needs a blurred, brightness-thresholded copy
+of the frame screened back over itself — a compositing operation, not a filter. Once
+halation has to be in the composition, putting grain and vignette there too keeps the whole
+finishing pass as one layer with one set of parameters rather than split across two stages
+that must be kept consistent. And it has to be *over* the text: grain under the captions
+but not over them reads as two images composited together. A test asserts the ffmpeg grade
+no longer carries them, because applying both would double the grain.
+
+---
+
+## 2026-09-28 — Four more components, and three bugs the gallery caught
+
+**Decision:** added `transition.dip` (white/black dip and flash), `transition.luma_wipe`,
+`shot_fx.impact_shake` and `text.stamp`, taking the catalogue to 11.
+
+**Evidence for the design choices, and what rendering them found:**
+
+`transition.dip`'s `flash` preset sets `hold: 0`, which produced an interpolation range with
+`0.5` twice — Remotion requires strictly increasing inputs and threw. A legal parameter
+value crashed the component, and only a gallery render surfaced it. The stops are now built
+to be strictly increasing whatever the hold is.
+
+`text.stamp` overflowed the frame: "18:40 — MAIN STAGE" at the caption size with stamp
+tracking ran off the right edge. Fitting the text alone was still not enough, because the
+pill's padding, the two gaps and the divider all scale with the font size — the size that
+leaves room for them is derived exactly rather than guessed with a factor. And the divider
+then vanished, because a fixed-width flex item inside a `max-width` container collapses
+under the default `flex-shrink: 1`.
+
+`shot_fx.impact_shake` decays exponentially rather than holding amplitude: real impact
+energy dissipates, so the first two frames carry almost all the displacement. Constant
+amplitude over fifteen frames is how this effect is usually done badly. Displacement is
+seeded from the frame number via Remotion's `random`, so it is noisy but deterministic —
+which §13.2 requires and which the gallery's perceptual diff depends on.
+
+`transition.luma_wipe` is a soft gradient mask with a light glow on the edge, never a hard
+edge, and its intent points at a *discovered* occlusion motif: where the footage already
+goes dark, wiping through that darkness turns an artefact of how it was shot into
+punctuation.
+
+Gallery renders also revealed that `render_gallery_item` passed a relative destination while
+running with its cwd inside `render/remotion`, so output went to the wrong directory.

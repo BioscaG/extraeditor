@@ -9,10 +9,15 @@
 
 import type React from "react";
 import type { ComponentMeta } from "./contract";
+import Finish, { meta as finishMeta } from "./finishing/Finish";
 import BeatPulse, { meta as beatPulseMeta } from "./shot_fx/BeatPulse";
+import ImpactShake, { meta as impactShakeMeta } from "./shot_fx/ImpactShake";
 import KineticTitle, { meta as kineticTitleMeta } from "./text/KineticTitle";
+import Stamp, { meta as stampMeta } from "./text/Stamp";
 import WordPopCaptions, { meta as wordPopMeta } from "./text/WordPopCaptions";
+import Dip, { meta as dipMeta } from "./transitions/Dip";
 import HardCut, { meta as hardCutMeta } from "./transitions/HardCut";
+import LumaWipe, { meta as lumaWipeMeta } from "./transitions/LumaWipe";
 import WhipPan, { meta as whipPanMeta } from "./transitions/WhipPan";
 import ZoomPunch, { meta as zoomPunchMeta } from "./transitions/ZoomPunch";
 
@@ -27,9 +32,14 @@ const entries: RegistryEntry[] = [
   { meta: hardCutMeta, Component: HardCut },
   { meta: whipPanMeta, Component: WhipPan },
   { meta: zoomPunchMeta, Component: ZoomPunch },
+  { meta: dipMeta, Component: Dip },
+  { meta: lumaWipeMeta, Component: LumaWipe },
   { meta: wordPopMeta, Component: WordPopCaptions },
   { meta: kineticTitleMeta, Component: KineticTitle },
+  { meta: stampMeta, Component: Stamp },
   { meta: beatPulseMeta, Component: BeatPulse },
+  { meta: impactShakeMeta, Component: ImpactShake },
+  { meta: finishMeta, Component: Finish },
 ];
 
 export const registry: Record<string, RegistryEntry> = Object.fromEntries(
@@ -72,4 +82,16 @@ export const stableMeta = (): ComponentMeta[] =>
   entries.filter((e) => e.meta.status === "stable").map((e) => e.meta);
 
 export * from "./contract";
-export { BeatPulse, HardCut, KineticTitle, WhipPan, WordPopCaptions, ZoomPunch };
+export {
+  BeatPulse,
+  Dip,
+  Finish,
+  HardCut,
+  ImpactShake,
+  KineticTitle,
+  LumaWipe,
+  Stamp,
+  WhipPan,
+  WordPopCaptions,
+  ZoomPunch,
+};

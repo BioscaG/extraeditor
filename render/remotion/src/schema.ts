@@ -122,6 +122,22 @@ export const editSchema = z.object({
   resolved: z.array(resolvedShotSchema).default([]),
   /** Palette name applied to every text component unless overridden per-props. */
   palette: z.enum(["neutral", "festival", "warm"]).default("neutral"),
+  /**
+   * Finishing parameters from the style, or null for none.
+   *
+   * Applied in the composition rather than by ffmpeg because halation — bloom around
+   * highlights — needs a blurred, threshold-masked copy of the frame composited back over
+   * itself, which is a compositing operation and not a filter.
+   */
+  finishing: z
+    .object({
+      grain: z.number().min(0).max(0.5).default(0),
+      vignette: z.number().min(0).max(0.7).default(0),
+      halation: z.number().min(0).max(0.8).default(0),
+      halationWarmth: z.number().min(0).max(1).default(0.6),
+    })
+    .nullable()
+    .default(null),
 });
 
 export type Edit = z.infer<typeof editSchema>;
