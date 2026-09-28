@@ -52,6 +52,10 @@ KIND_BONUS = {
     "transition_candidate": 0.0,
 }
 
+# Camera-motion magnitude treated as full energy. Above roughly this the shot is already
+# as busy as footage gets; the analyzer reports magnitude in grid cells per frame.
+MOTION_ENERGY_SCALE = 6.0
+
 # The shortest candidate range worth considering at all.
 MIN_SHOT_S = 0.4
 # Floor for a generated shot. Must be >= the rails' `min_shot_s`, or the builder
@@ -73,6 +77,8 @@ class Candidate:
     has_speech: bool = False
     has_words: bool = False
     energy: int = 3
+    # Whether `energy` came from a clip log. Without one it is a default, not a measurement.
+    energy_from_log: bool = False
     aesthetic: int = 3
     us_present: bool = False
     label: str = ""
@@ -89,11 +95,25 @@ class Candidate:
     def is_moment(self) -> bool:
         return self.moment_score > 0.0
 
+    @property
+    def energy_value(self) -> float:
+        """Energy as 0–1, from the clip log if there is one, otherwise from motion.
+
+        Falling back to measured motion matters: without semantic analysis every clip log
+        is absent and `energy` sits at its default 3, so energy matching does nothing and
+        the picture's business bears no relation to the music's. The rhythm report measures
+        *motion* energy against music energy, so the planner should optimize the same
+        quantity the report scores it on.
+        """
+        if self.energy_from_log:
+            return self.energy / 5.0
+        return min(1.0, self.motion / MOTION_ENERGY_SCALE)
+
     def score(self, want_energy: float) -> float:
         """Rank for a target energy, 0–1. Higher is a better fit."""
         # Aesthetic and quality are absolute goods; energy is a *match*, not a maximum,
         # because a calm intro needs calm footage.
-        energy_fit = 1.0 - abs(self.energy / 5.0 - want_energy)
+        energy_fit = 1.0 - abs(self.energy_value - want_energy)
         people = 0.15 if self.us_present else 0.0
         base = (
             0.30 * self.quality
@@ -205,6 +225,7 @@ def collect_candidates(inputs: BuildInputs) -> list[Candidate]:
                 has_speech=any(s.t1 > span.t0 and s.t0 < span.t1 for s in speech),
                 has_words=any(w.t1 > span.t0 and w.t0 < span.t1 for w in words),
                 energy=log.energy if log else 3,
+                energy_from_log=log is not None,
                 aesthetic=log.aesthetic if log else 3,
                 us_present=log.people.us_present if log else False,
                 label=log.summary[:80] if log else "",

@@ -400,3 +400,36 @@ def test_the_highest_scoring_candidate_is_the_logged_moment():
     )
     best = max(collect_candidates(inputs), key=lambda c: c.score(0.6))
     assert best.moment_kind == "hero"
+
+
+# -- energy without semantic analysis ------------------------------------------------------
+
+
+def test_energy_falls_back_to_measured_motion_without_a_clip_log():
+    """Otherwise every candidate sits at the default 3 and energy matching does nothing."""
+    from montaje.plan.build import MOTION_ENERGY_SCALE, Candidate
+
+    still = Candidate("a", 0, 2, motion=0.0)
+    busy = Candidate("a", 0, 2, motion=MOTION_ENERGY_SCALE)
+    assert still.energy_value == 0.0
+    assert busy.energy_value == 1.0
+    # A calm section prefers the still shot, a loud one the busy shot.
+    assert still.score(0.1) > busy.score(0.1)
+    assert busy.score(0.9) > still.score(0.9)
+
+
+def test_a_clip_log_overrides_the_motion_fallback():
+    """A logged energy is a judgement about the content; motion is only a proxy for it."""
+    from montaje.plan.build import Candidate
+
+    logged = Candidate("a", 0, 2, motion=0.0, energy=5, energy_from_log=True)
+    assert logged.energy_value == 1.0
+
+
+def test_the_planner_optimizes_what_the_rhythm_report_measures():
+    """Report and planner must agree on 'energy', or the report always complains."""
+    from montaje.plan.build import Candidate
+
+    # The report derives visual energy from motion events, so with no clip log the
+    # planner's energy must come from motion too.
+    assert Candidate("a", 0, 2, motion=3.0).energy_value > 0.0

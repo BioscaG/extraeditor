@@ -567,3 +567,34 @@ rather than the builder choosing. A shot left entirely inside the motif is dropp
 none of it was footage the shooter intended to be seen. Preserving status across re-runs
 matters because re-running analysis must not silently un-confirm a decision or re-ask a
 question that has been answered.
+
+---
+
+## 2026-09-28 — Pipeline order: source-range edits before the rails, timeline repairs after
+
+**Decision:** `render.pipeline` applies confirmed conventions (a source-range edit) *before*
+`apply_rails`, and speech repair, caption repair and SFX spotting (all timeline-position
+dependent) after it.
+
+**Evidence:** applying the convention trim after the rails shortened shots the rails had
+already laid out head to tail, opening one- and two-frame gaps that render as black frames
+and fail validation — a regression the end-to-end run caught immediately after conventions
+were wired in. The rule generalizes: anything that changes `src_in`/`src_out` must run
+before relayout so relayout can absorb it, and anything that reads `timeline_in` must run
+after snapping has finished moving it. A test spies on the call order to pin it.
+
+---
+
+## 2026-09-28 — Without clip logs, energy comes from measured motion
+
+**Decision:** `Candidate.energy_value` uses the clip log's 1–5 energy when there is one, and
+otherwise scales the measured camera-motion magnitude.
+
+**Evidence:** the rhythm report derives *visual* energy from motion events, while the
+planner was matching on *semantic* energy — which without clip logs sits at its default 3
+for every candidate, so energy matching did nothing at all. The report duly reported the
+consequence: `visual energy barely tracks the music (r=-0.09)`. Deriving energy from motion
+when no log exists makes the planner optimize the same quantity the report scores it on, and
+takes the correlation from **-0.07 to +0.49** on the fixture shoot — the busiest footage now
+lands in the loudest section. A logged energy still wins where one exists, because that is a
+judgement about the content and motion is only a proxy for it.

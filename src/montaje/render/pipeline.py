@@ -94,7 +94,22 @@ def render(
     grid: BeatGrid | None = structure.grid if structure else None
 
     # -- rails (non-bypassable, §18) -------------------------------------------------
+    #
+    # The order here is the whole point of this function, and it follows one rule:
+    # everything that changes a shot's **source range** runs *before* the rails, and
+    # everything that depends on its final **timeline position** runs after.
+    #
+    # Conventions trim source ranges, so they go first — applied afterwards they shortened
+    # shots the rails had already laid out and opened one- and two-frame gaps, which render
+    # as black frames and fail validation. Speech repair, caption repair and SFX spotting
+    # all read timeline positions, so they must come after snapping has moved them.
     if apply_rails_first:
+        # Confirmed conventions trim the motif out of every shot, including shots the
+        # agent wrote by hand rather than the builder choosing (§12).
+        convention_report = apply_conventions(
+            plan, load_conventions(ws), events, min_shot_s=cfg.rails.min_shot_s
+        )
+
         rail_ctx = RailContext(
             candidates={aid: SnapCandidates.from_events(evs) for aid, evs in events.items()},
             grid=grid,
@@ -107,15 +122,6 @@ def render(
         )
         plan, rail_report = apply_rails(plan, rail_ctx)
         result.rails_summary = rail_report.summary()
-
-        # Both of these depend on the *final* timeline, so they run after the rails:
-        # snapping moves cut points and may drop shots, which changes where SFX belong
-        # and which speech shots end up adjacent.
-        # Confirmed conventions trim the motif out of every shot, including shots the
-        # agent wrote by hand rather than the builder choosing (§12).
-        convention_report = apply_conventions(
-            plan, load_conventions(ws), events, min_shot_s=cfg.rails.min_shot_s
-        )
         if convention_report.changed:
             result.rails_summary += f"; {convention_report.summary()}"
 

@@ -356,3 +356,40 @@ def test_without_conventions_the_whole_usable_span_is_offered():
     ]
     inputs = BuildInputs(assets={"a_1": make_asset("a_1", 7.0)}, events={"a_1": events})
     assert any(c.t0 < 0.5 for c in collect_candidates(inputs))
+
+
+# -- ordering in the render pipeline --------------------------------------------------------
+
+
+def test_convention_trimming_runs_before_the_rails(project, monkeypatch):
+    """Trimming after relayout shortens laid-out shots and opens black-frame gaps.
+
+    The rule the pipeline follows: source-range edits before the rails, timeline-position
+    repairs after. This pins the convention trim on the correct side of it.
+    """
+    from montaje.render import pipeline
+
+    calls: list[str] = []
+    real_conventions = pipeline.apply_conventions
+    real_rails = pipeline.apply_rails
+
+    def spy_conventions(*args, **kwargs):
+        calls.append("conventions")
+        return real_conventions(*args, **kwargs)
+
+    def spy_rails(*args, **kwargs):
+        calls.append("rails")
+        return real_rails(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "apply_conventions", spy_conventions)
+    monkeypatch.setattr(pipeline, "apply_rails", spy_rails)
+    monkeypatch.setattr(pipeline, "apply_spotting", lambda plan, **kw: plan)
+
+    from montaje.config import load_config
+    from montaje.index.store import Store
+
+    with Store(project.db_path) as store:
+        store.upsert_asset(make_asset("a_1", 30.0))
+    pipeline.render(project, make_plan(), load_config(), skip_video=True)
+
+    assert calls.index("conventions") < calls.index("rails")
