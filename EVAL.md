@@ -68,6 +68,9 @@ than discovered:
 - **Shot selection ignores duplicates.** `dedupe` is not implemented, so the only
   protection against near-identical adjacent shots is avoiding the same source clip twice
   in a row.
+- **Conventions must be confirmed before they help.** `montaje conventions propose` finds
+  recurring motifs, but nothing is trimmed until you confirm one. If the footage has a
+  habit and you skipped this step, expect covered or dark frames in the edit.
 - **One transition per section change, chosen round-robin.** Motion matching is recorded
   in the component metadata but the baseline planner does not use it yet.
 - **The critic loop (§20) is not implemented.** Nothing watches the preview.

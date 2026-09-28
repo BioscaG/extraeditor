@@ -15,10 +15,12 @@ app = typer.Typer(no_args_is_help=True, help="montaje — agentic video editor")
 source_app = typer.Typer(no_args_is_help=True, help="Manage footage sources")
 debug_app = typer.Typer(no_args_is_help=True, help="Debug utilities")
 library_app = typer.Typer(no_args_is_help=True, help="Craft library: list, gallery, review")
+conventions_app = typer.Typer(no_args_is_help=True, help="Discovered footage conventions")
 style_app = typer.Typer(no_args_is_help=True, help="Styles")
 app.add_typer(source_app, name="source")
 app.add_typer(debug_app, name="debug")
 app.add_typer(library_app, name="library")
+app.add_typer(conventions_app, name="conventions")
 app.add_typer(style_app, name="style")
 
 console = Console()
@@ -184,6 +186,34 @@ def export(
     from montaje.cli_plan import cmd_export
 
     cmd_export(project, what)
+
+
+@conventions_app.command("propose")
+def conventions_propose(project: str | None = PROJECT_OPT) -> None:
+    """Mine the footage for recurring motifs and propose conventions for confirmation."""
+    from montaje.cli_plan import cmd_conventions_propose
+
+    cmd_conventions_propose(project)
+
+
+@conventions_app.command("list")
+def conventions_list(project: str | None = PROJECT_OPT) -> None:
+    """Show every proposed, confirmed and rejected convention."""
+    from montaje.cli_plan import cmd_conventions_list
+
+    cmd_conventions_list(project)
+
+
+@conventions_app.command("confirm")
+def conventions_confirm(
+    convention_id: str = typer.Argument(..., help="Convention id, or 'all'"),
+    project: str | None = PROJECT_OPT,
+    reject: bool = typer.Option(False, "--reject", help="Reject instead of confirming"),
+) -> None:
+    """Confirm (or reject) a convention. Nothing affects an edit until confirmed."""
+    from montaje.cli_plan import cmd_conventions_confirm
+
+    cmd_conventions_confirm(project, convention_id, reject)
 
 
 @debug_app.command("rhythm")

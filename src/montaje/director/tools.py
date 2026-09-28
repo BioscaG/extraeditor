@@ -271,6 +271,116 @@ def get_clip_log(session: Session, asset_id: str) -> dict[str, Any]:
     return log.model_dump(mode="json")
 
 
+def find_patterns(session: Session) -> dict[str, Any]:
+    """Recurring structural motifs across the footage (§11).
+
+    Measurements, not meanings: what the miner reports is how often clips begin or end
+    with a particular kind of event. Interpreting one — deciding that a dark span at the
+    start of a clip is someone uncovering the lens — is the agent's job, and the user's to
+    confirm (§12, §2.5).
+    """
+    from montaje.index.patterns import mine_patterns
+
+    with session.store() as store:
+        assets = {a.asset_id: a for a in store.list_assets()}
+        events = {aid: store.get_events(aid) for aid in assets}
+        names = {a.asset_id: a.path.name for a in assets.values()}
+
+    patterns = mine_patterns(assets, events)
+    return {
+        "clips": len(assets),
+        "patterns": [
+            {
+                "id": p.id,
+                "kind": p.kind,
+                "start_event": p.event_type if p.kind != "end_motif" else None,
+                "end_event": p.paired_event_type or (
+                    p.event_type if p.kind == "end_motif" else None
+                ),
+                "count": p.count,
+                "share": round(p.share, 3),
+                "selectivity": p.selectivity,
+                "confidence": p.confidence,
+                "description": p.describe(),
+                "example_files": [names.get(a, a) for a in p.assets[:6]],
+            }
+            for p in patterns
+        ],
+        "note": (
+            "Call propose_conventions to turn these into conventions, then ask the user "
+            "to confirm. Nothing affects the edit until confirmed."
+        ),
+    }
+
+
+def propose_conventions_tool(session: Session) -> dict[str, Any]:
+    """Turn discovered patterns into conventions awaiting confirmation (§12)."""
+    from montaje.index.conventions import load_conventions, merge_proposals, save_conventions
+    from montaje.index.patterns import mine_patterns, propose_conventions
+
+    with session.store() as store:
+        assets = {a.asset_id: a for a in store.list_assets()}
+        events = {aid: store.get_events(aid) for aid in assets}
+
+    merged = merge_proposals(
+        load_conventions(session.ws), propose_conventions(mine_patterns(assets, events))
+    )
+    save_conventions(session.ws, merged)
+    return {
+        "conventions": [
+            {
+                "id": c.id,
+                "status": c.status.value,
+                "description": c.description,
+                "start_event": c.detection.start_event,
+                "end_event": c.detection.end_event,
+                "role": c.treatment.role,
+                "clips": c.evidence.count,
+            }
+            for c in merged
+        ],
+        "note": (
+            "Ask the user to confirm the ones that are real, with `ask_user`. A convention "
+            "the user already confirmed or rejected keeps that decision."
+        ),
+    }
+
+
+def get_conventions(session: Session) -> dict[str, Any]:
+    """Current conventions and their status. Only confirmed ones affect an edit."""
+    from montaje.index.conventions import load_conventions
+
+    conventions = load_conventions(session.ws)
+    return {
+        "count": len(conventions),
+        "confirmed": [c.id for c in conventions if c.status.value == "confirmed"],
+        "proposed": [c.id for c in conventions if c.status.value == "proposed"],
+        "rejected": [c.id for c in conventions if c.status.value == "rejected"],
+        "conventions": [c.model_dump(mode="json") for c in conventions],
+    }
+
+
+def confirm_convention(session: Session, convention_id: str, reject: bool = False) -> dict[str, Any]:
+    """Confirm or reject a convention on the user's instruction.
+
+    Only call this once the user has answered — the whole point of §12 is that the system
+    proposes and the human decides.
+    """
+    from montaje.index.conventions import load_conventions, save_conventions
+    from montaje.models.conventions import ConventionStatus
+
+    conventions = load_conventions(session.ws)
+    target = next((c for c in conventions if c.id == convention_id), None)
+    if target is None:
+        return {
+            "error": f"no convention {convention_id!r}",
+            "known": [c.id for c in conventions],
+        }
+    target.status = ConventionStatus.REJECTED if reject else ConventionStatus.CONFIRMED
+    save_conventions(session.ws, conventions)
+    return {"id": target.id, "status": target.status.value}
+
+
 def music_structure(session: Session) -> dict[str, Any]:
     """Tempo, beat grid summary, sections and how the track was fitted (§14.2)."""
     structure = session.structure
@@ -647,6 +757,10 @@ def tool_catalog() -> list[dict[str, str]]:
         {"name": "get_clip_log", "purpose": "semantic clip log"},
         {"name": "semantic_status", "purpose": "is semantic analysis available and applied"},
         {"name": "contact_sheet", "purpose": "frame grid for a range"},
+        {"name": "find_patterns", "purpose": "recurring structural motifs in the footage"},
+        {"name": "propose_conventions_tool", "purpose": "turn patterns into conventions"},
+        {"name": "get_conventions", "purpose": "conventions and their confirmation status"},
+        {"name": "confirm_convention", "purpose": "confirm or reject, on the user's word"},
         {"name": "music_structure", "purpose": "tempo, grid, sections, duration fit"},
         {"name": "library_search", "purpose": "components by query/kind/energy"},
         {"name": "library_get", "purpose": "one component's full metadata"},

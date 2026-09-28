@@ -117,6 +117,30 @@ def build_server(workspace: Workspace) -> MCPServer:
         return tools.contact_sheet(session, asset_id, t0, t1, columns)
 
     @server.tool()
+    def find_patterns() -> dict[str, Any]:
+        """Recurring motifs across the footage: how often clips begin or end with a
+        particular kind of event. These are measurements — interpreting one is your job.
+        Run this during the survey, before building a plan."""
+        return tools.find_patterns(session)
+
+    @server.tool()
+    def propose_conventions() -> dict[str, Any]:
+        """Turn discovered patterns into conventions awaiting confirmation. Then use
+        `ask_user` to ask which are real; nothing affects the edit until confirmed."""
+        return tools.propose_conventions_tool(session)
+
+    @server.tool()
+    def get_conventions() -> dict[str, Any]:
+        """Current conventions and their status. Only confirmed ones trim any footage."""
+        return tools.get_conventions(session)
+
+    @server.tool()
+    def confirm_convention(convention_id: str, reject: bool = False) -> dict[str, Any]:
+        """Confirm or reject a convention — only after the user has said which. A
+        confirmed convention trims its motif out of every shot from a matching clip."""
+        return tools.confirm_convention(session, convention_id, reject)
+
+    @server.tool()
     def music_structure() -> dict[str, Any]:
         """Tempo, beat grid, phrase boundaries, sections with roles and energy, and how
         the track was fitted to the target duration. Plan sections against this."""

@@ -63,7 +63,37 @@
       "brightness": 0.05,
       "temperature": 2900,
       "audio": "crowd"
+    },
+    {
+      "file": "vlog_a.mp4",
+      "duration_s": 7.0,
+      "bookended": true,
+      "cover_s": 0.9
+    },
+    {
+      "file": "vlog_b.mp4",
+      "duration_s": 6.0,
+      "bookended": true,
+      "cover_s": 0.9
+    },
+    {
+      "file": "vlog_c.mp4",
+      "duration_s": 8.0,
+      "bookended": true,
+      "cover_s": 0.9
+    },
+    {
+      "file": "vlog_d.mp4",
+      "duration_s": 6.5,
+      "bookended": true,
+      "cover_s": 0.9
     }
   ],
-  "total_s": 51.0
+  "total_s": 78.5,
+  "bookended_files": [
+    "vlog_a.mp4",
+    "vlog_b.mp4",
+    "vlog_c.mp4",
+    "vlog_d.mp4"
+  ]
 }

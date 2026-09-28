@@ -13,6 +13,7 @@ from pathlib import Path
 from montaje.color.grade import Grade, grade_from_style
 from montaje.color.normalize import corrections_for_asset
 from montaje.config import Config
+from montaje.index.conventions import apply_conventions, load_conventions
 from montaje.index.store import Store
 from montaje.library.registry import licensed_sfx_ids, sfx_paths, sfx_peak_offsets, stable_refs
 from montaje.models.asset import Asset
@@ -110,6 +111,14 @@ def render(
         # Both of these depend on the *final* timeline, so they run after the rails:
         # snapping moves cut points and may drop shots, which changes where SFX belong
         # and which speech shots end up adjacent.
+        # Confirmed conventions trim the motif out of every shot, including shots the
+        # agent wrote by hand rather than the builder choosing (§12).
+        convention_report = apply_conventions(
+            plan, load_conventions(ws), events, min_shot_s=cfg.rails.min_shot_s
+        )
+        if convention_report.changed:
+            result.rails_summary += f"; {convention_report.summary()}"
+
         fix_speech_cuts(plan)
         dropped_captions = drop_empty_captions(plan, _word_spans(events))
         if dropped_captions:

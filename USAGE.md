@@ -47,6 +47,7 @@ montaje source add folder ~/Movies/festival
 montaje ingest                    # probe, proxies, HDR→SDR, audio, thumbnails
 montaje report                    # VFR, HDR mix, degraded assets, failures
 montaje analyze                   # shots, quality, occlusion, motion, audio, VAD, ASR, colour
+montaje conventions propose       # discover recurring motifs; confirm the real ones
 montaje plan                      # baseline EditPlan from the music structure
 montaje render --quality draft    # rails, validate, conform, mix, compose, mux
 montaje export all                # SRT + OTIO + FCPXML referencing the originals
@@ -92,14 +93,36 @@ useful ones:
 | README section | state |
 |---|---|
 | §6–8 workspace, folder source, ingest, HDR | done |
-| §9 local analysis | shots, quality, occlusion, motion, audio events, VAD, ASR, loudness, colour stats. Missing: embeddings, subjects, sync, dedupe, separation |
+| §9 local analysis | shots, quality, occlusion, motion, audio events, VAD, ASR, loudness, colour stats, subjects. Missing: embeddings, sync, dedupe, separation |
 | §10 semantic clip logs | implemented; needs `GEMINI_API_KEY`. Untested against the live API |
 | §13–15 craft library, tokens, colour pipeline | tokens and 6 components; catalogue is a fraction of §13.3 |
 | §14 music editing, mix, SFX | beats, structure, fit-to-duration, spotting, mix, stems. Missing: lyrics, generation |
 | §17–18 EditPlan, ops, rails, rhythm | done |
 | §19 render and exports | done, except the overlay alpha track is untested against Resolve |
 | §16 director | tools and MCP server; no built-in loop yet |
+| §11–12 pattern mining and conventions | done: motifs discovered, confirmed by you, then applied |
 | §20 critic, §21 workshop, §22 style learning | not started |
 | §7.2 Apple Photos bridge | not started |
 
 `DECISIONS.md` records every non-obvious choice and the evidence for it.
+
+## Conventions
+
+Footage has habits. A vlogger might open every clip by uncovering the lens and close it by
+covering it again — and an edit that keeps those frames looks careless.
+
+montaje finds such habits without being told what they are:
+
+```bash
+montaje conventions propose        # mine the footage for recurring motifs
+montaje conventions list           # see what it found and what it means
+montaje conventions confirm <id>   # only now does it affect any edit
+```
+
+The miner asks purely structural questions — how often do clips *begin* with a particular
+kind of event, how often do they *end* with one, and does that separate some clips from
+others? It reports counts and examples. Deciding that a dark span at the start of a clip is
+a hand over the lens is your call, and until you confirm it nothing is trimmed.
+
+A confirmed convention trims its motif out of every shot from a matching clip, and the
+planner stops choosing ranges inside it in the first place.

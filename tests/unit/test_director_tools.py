@@ -265,7 +265,8 @@ def test_every_public_tool_is_catalogued():
     expected = {
         "project_overview", "list_footage", "search_footage", "get_events",
         "get_clip_log", "semantic_status", "contact_sheet", "music_structure",
-        "library_search",
+        "find_patterns", "propose_conventions_tool", "get_conventions",
+        "confirm_convention", "library_search",
         "library_get", "sfx_search", "get_style", "build_baseline_plan", "plan_get",
         "plan_apply", "plan_validate", "rhythm_report", "render_preview",
         "write_summary", "ask_user",

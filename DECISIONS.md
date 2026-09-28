@@ -507,3 +507,63 @@ the intended ordering, because an edit made of flawless shots of nothing is wors
 made of slightly soft shots of something. Transition candidates earn no general bonus
 because they are only useful at a boundary. Keeping the usable spans as candidates means a
 clip the model logged no moments in is still available rather than excluded.
+
+---
+
+## 2026-09-28 — Pattern mining asks only structural questions
+
+**Decision:** `index/patterns.py` measures how often clips begin or end with each kind of
+analyzer event, reports counts, examples and a confidence, and names nothing. A test
+asserts the output contains none of the words *hand*, *lens*, *vlog* or *festival*.
+
+**Evidence:** this module is the test of §2.5. On a 12-clip shoot where 4 clips were
+obscured at both ends, the miner's top finding is
+`bookend.occlusion.reveal~occlusion.cover` matching **exactly** those 4 clips — M3's
+headline acceptance criterion, met with no code that knows what a hand or a lens is. The
+fixture's asset ids are deliberately neutral (`a_m0`, not `a_vlog0`), because the first
+version of that test passed only because the *fixture* was doing the naming.
+
+---
+
+## 2026-09-28 — Motifs are filtered by measured coverage and selectivity
+
+**Decision:** an event type whose events cover more than 50% of a clip cannot mark a motif
+at its edge, and a pattern present in more than 90% of clips is rejected. Patterns are
+ranked by *selectivity* (peaking at half the footage) before confidence, and patterns
+identifying an identical set of clips are collapsed to one.
+
+**Evidence:** measured, in three steps, on the same 12-clip shoot:
+
+| filter | patterns surfaced | real motif's rank |
+|---|---|---|
+| none | 70+ | buried, below ~30 at confidence 1.00 |
+| + coverage and selectivity | 10 | joint 1st, with three restatements |
+| + collapse duplicates | 2 | 1st |
+
+Per-second analyzers (motion, quality metrics, colour stats, subjects) emit something in
+every clip's first and last second *by construction*, so without the coverage filter they
+produce dozens of patterns at perfect confidence that describe the sampling rather than the
+footage. Coverage is **measured** rather than a hardcoded list of analyzer names, so
+analyzers that do not exist yet are handled. Selectivity is the ranking signal because a
+motif in every clip separates nothing; sheer prevalence mostly measures how the analyzers
+sample. Edge events (`reveal`, `cover`, `word`) are preferred over spans when both identify
+the same clips, because a convention's treatment is to *trim to* an instant and there is
+nothing to trim to mid-span.
+
+---
+
+## 2026-09-28 — A convention does nothing until confirmed, and then trims at two points
+
+**Decision:** conventions persist in `conventions.yaml` with `proposed | confirmed |
+rejected`. Only confirmed ones act, and they act twice: the planner refuses to *choose*
+ranges inside the motif, and `apply_conventions` trims any shot that still overlaps it.
+Re-running the miner refreshes a convention's evidence but never its status.
+
+**Evidence:** §12 requires the user to confirm, so discovery must not imply application —
+tests assert that a proposed or rejected convention changes nothing. Applying at both
+points is not redundant: the planner check stops a shot being chosen inside the motif and
+wasting the budget it was allocated, while the trim catches shots the *agent* wrote by hand
+rather than the builder choosing. A shot left entirely inside the motif is dropped, because
+none of it was footage the shooter intended to be seen. Preserving status across re-runs
+matters because re-running analysis must not silently un-confirm a decision or re-ask a
+question that has been answered.

@@ -93,6 +93,43 @@ def _clip(
 # A shoot with deliberate variety: two speaking clips, crowd-ish clips at different
 # colour temperatures, panning clips in both directions, and one dark clip the quality
 # analyzer should rank low.
+def _bookended_clip(out: Path, duration: float = 7.0, hue: int = 20, fps: int = 30,
+                    size: str = "720x1280", cover_s: float = 0.9) -> dict:
+    """A clip that opens *and* closes with the lens obscured.
+
+    This is the festival footage's convention, reproduced structurally: the first and last
+    `cover_s` seconds are near-black and featureless. Nothing in the fixture or the miner
+    names a hand or a lens — the point is that the motif is discoverable from
+    meaning-free occlusion events alone (§2.5, §11).
+    """
+    w, h = (int(v) for v in size.split("x"))
+    blank = (f"if(lt(T,{cover_s})+gt(T,{duration - cover_s}),4,lum(X,Y))",
+             f"if(lt(T,{cover_s})+gt(T,{duration - cover_s}),128,cb(X,Y))",
+             f"if(lt(T,{cover_s})+gt(T,{duration - cover_s}),128,cr(X,Y))")
+    vf = (f"scale={w}:{h},hue=h={hue},"
+          f"geq=lum='{blank[0]}':cb='{blank[1]}':cr='{blank[2]}',fps={fps},format=yuv420p")
+    _run([
+        "-f", "lavfi", "-i", f"testsrc2=size={size}:rate={fps}:duration={duration}",
+        "-f", "lavfi", "-i",
+        f"anoisesrc=color=pink:amplitude=0.2:duration={duration}:sample_rate=48000",
+        "-vf", vf, "-map", "0:v", "-map", "1:a", "-t", str(duration),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:a", "aac", "-ar", "48000", "-shortest", str(out),
+    ])
+    return {"file": out.name, "duration_s": duration, "bookended": True,
+            "cover_s": cover_s}
+
+
+# Clips that open and close with the lens obscured, plus clips that do not. The miner must
+# find the motif in the former without being told it exists.
+BOOKENDED = [
+    dict(name="vlog_a.mp4", duration=7.0, hue=20),
+    dict(name="vlog_b.mp4", duration=6.0, hue=35),
+    dict(name="vlog_c.mp4", duration=8.0, hue=10),
+    dict(name="vlog_d.mp4", duration=6.5, hue=28),
+]
+
+
 SHOOT = [
     dict(name="clip_01_vlog.mp4", duration=8.0, hue=10, motion="static",
          brightness=0.04, temperature=5200, audio="speech"),
@@ -113,14 +150,23 @@ SHOOT = [
 ]
 
 
-def make_shoot(out_dir: Path) -> dict:
+def make_shoot(out_dir: Path, bookended: bool = True) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     clips = []
     for spec in SHOOT:
         name = spec.pop("name")
         clips.append(_clip(out_dir / name, **spec))
         spec["name"] = name  # keep SHOOT reusable across calls
-    truth = {"clips": clips, "total_s": sum(c["duration_s"] for c in clips)}
+    if bookended:
+        for spec in BOOKENDED:
+            name = spec.pop("name")
+            clips.append(_bookended_clip(out_dir / name, **spec))
+            spec["name"] = name
+    truth = {
+        "clips": clips,
+        "total_s": sum(c["duration_s"] for c in clips),
+        "bookended_files": [c["file"] for c in clips if c.get("bookended")],
+    }
     (out_dir / "shoot.json").write_text(json.dumps(truth, indent=2))
     return truth
 

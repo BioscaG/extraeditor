@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from montaje.models.asset import Asset, AssetKind
 from montaje.models.cliplog import ClipLog
+from montaje.models.conventions import Convention
 from montaje.models.editplan import (
     AudioMode,
     Captions,
@@ -116,6 +117,21 @@ class BuildInputs:
     music_fit: MusicFit | None = None
     style: Style | None = None
     music_asset_id: str | None = None
+    conventions: list[Convention] = field(default_factory=list)
+
+    def usable_range(self, asset_id: str, duration_s: float) -> tuple[float, float]:
+        """The part of an asset a confirmed convention leaves usable (§12).
+
+        Applied when *choosing* ranges, not only when trimming afterwards: a shot picked
+        inside a motif would be trimmed away later, wasting the budget it was given.
+        """
+        from montaje.index.conventions import usable_after_conventions
+
+        if not self.conventions:
+            return 0.0, duration_s
+        return usable_after_conventions(
+            asset_id, duration_s, self.conventions, self.events.get(asset_id, [])
+        )
 
     def word_spans(self, asset_id: str) -> list[tuple[float, float]]:
         return [
@@ -163,9 +179,13 @@ def collect_candidates(inputs: BuildInputs) -> list[Candidate]:
             for moment in log.moments:
                 spans.append((moment.t0, moment.t1, moment.score, moment.kind.value))
 
-        for span_t0, span_t1, moment_score, moment_kind in spans:
+        allowed_lo, allowed_hi = inputs.usable_range(asset_id, asset.duration_s)
+        for raw_t0, raw_t1, moment_score, moment_kind in spans:
+            # Clip every candidate to what the confirmed conventions leave usable.
+            span_t0 = max(raw_t0, allowed_lo)
+            span_t1 = min(raw_t1, allowed_hi)
             span = Event(asset_id=asset_id, analyzer="span@0", type="span",
-                         t0=span_t0, t1=span_t1)
+                         t0=span_t0, t1=max(span_t0, span_t1))
             if span.t1 - span.t0 < MIN_SHOT_S:
                 continue
             inner = [m for m in metrics if m.t0 >= span.t0 - 1 and m.t1 <= span.t1 + 1]

@@ -87,6 +87,9 @@ def cmd_plan(project: str | None, title: str | None, target_s: float | None) -> 
 
     structure, fit, music_asset = load_music_context(ws)
     style = load_style(brief.style) or load_default()
+    from montaje.index.conventions import confirmed, load_conventions
+
+    conventions = confirmed(load_conventions(ws))
 
     plan = build_plan(
         project=ws.slug,
@@ -94,12 +97,14 @@ def cmd_plan(project: str | None, title: str | None, target_s: float | None) -> 
                        fps=brief.format.fps, dynamic_range=brief.format.dynamic_range),
         inputs=BuildInputs(assets=assets, events=events, clip_logs=clip_logs,
                            structure=structure, music_fit=fit, style=style,
-                           music_asset_id=music_asset),
+                           music_asset_id=music_asset, conventions=conventions),
         title=title or brief.goal or ws.slug,
         target_s=target_s or (brief.duration.target_s if brief.duration else None),
     )
     plan = apply_spotting(plan, structure=structure, style=style)
     plan.version = ws.next_plan_version()
+    if conventions:
+        console.print(f"  honouring {len(conventions)} confirmed convention(s)")
 
     path = ws.plans_dir / f"plan_v{plan.version:03d}.json"
     atomic_write_text(path, plan.model_dump_json(indent=2))
@@ -242,3 +247,92 @@ def cmd_export(project: str | None, what: str) -> None:
         )
     for path in written:
         console.print(f"[green]Exported[/green] {path}")
+
+
+def _load_index(ws: Workspace):
+    from montaje.index.store import Store
+
+    with Store(ws.db_path) as store:
+        assets = {a.asset_id: a for a in store.list_assets()}
+        events = {aid: store.get_events(aid) for aid in assets}
+    return assets, events
+
+
+def cmd_conventions_propose(project: str | None) -> None:
+    """Mine patterns and merge new proposals into conventions.yaml (§11–12)."""
+    from montaje.index.conventions import load_conventions, merge_proposals, save_conventions
+    from montaje.index.patterns import mine_patterns, propose_conventions, summarize
+
+    ws = resolve_workspace(project)
+    assets, events = _load_index(ws)
+    if not assets:
+        raise typer.BadParameter("no assets; run `montaje ingest` and `montaje analyze` first")
+
+    patterns = mine_patterns(assets, events)
+    from rich.markdown import Markdown
+
+    console.print(Markdown(summarize(patterns)))
+
+    merged = merge_proposals(load_conventions(ws), propose_conventions(patterns))
+    save_conventions(ws, merged)
+    proposed = [c for c in merged if c.status.value == "proposed"]
+    console.print(
+        f"\n[green]{len(merged)}[/green] conventions in {ws.conventions_yaml.name} "
+        f"({len(proposed)} awaiting confirmation)."
+    )
+    if proposed:
+        console.print("Confirm one with: [bold]montaje conventions confirm <id>[/bold]")
+
+
+def cmd_conventions_list(project: str | None) -> None:
+    from montaje.index.conventions import load_conventions
+
+    ws = resolve_workspace(project)
+    conventions = load_conventions(ws)
+    if not conventions:
+        console.print("No conventions yet. Run `montaje conventions propose`.")
+        return
+    table = Table(title=f"Conventions — {ws.slug}")
+    for column in ("id", "status", "clips", "detection", "treatment"):
+        table.add_column(column)
+    for c in conventions:
+        detection = " → ".join(
+            x for x in (c.detection.start_event, c.detection.end_event) if x
+        )
+        table.add_row(
+            c.id,
+            {"confirmed": "[green]confirmed[/green]", "rejected": "[red]rejected[/red]"}
+            .get(c.status.value, "[yellow]proposed[/yellow]"),
+            str(c.evidence.count), detection or "—", c.treatment.role,
+        )
+    console.print(table)
+    for c in conventions:
+        console.print(f"\n[bold]{c.id}[/bold]: {c.description}")
+
+
+def cmd_conventions_confirm(project: str | None, convention_id: str, reject: bool) -> None:
+    from montaje.index.conventions import load_conventions, save_conventions
+    from montaje.models.conventions import ConventionStatus
+
+    ws = resolve_workspace(project)
+    conventions = load_conventions(ws)
+    if not conventions:
+        raise typer.BadParameter("no conventions; run `montaje conventions propose` first")
+
+    status = ConventionStatus.REJECTED if reject else ConventionStatus.CONFIRMED
+    targets = conventions if convention_id == "all" else [
+        c for c in conventions if c.id == convention_id
+    ]
+    if not targets:
+        raise typer.BadParameter(
+            f"no convention {convention_id!r}; known: {', '.join(c.id for c in conventions)}"
+        )
+    for c in targets:
+        c.status = status
+    save_conventions(ws, conventions)
+    verb = "Rejected" if reject else "Confirmed"
+    console.print(f"[green]{verb}[/green] {len(targets)} convention(s).")
+    if not reject:
+        console.print(
+            "Shots inside the motif will be trimmed on the next `montaje plan`/`render`."
+        )
