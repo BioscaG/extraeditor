@@ -7,6 +7,7 @@ import pytest
 from montaje.analysis.semantic import prompts
 from montaje.analysis.semantic.clip_log import cache_path, run_semantic, semantic_config
 from montaje.analysis.semantic.gemini_client import (
+    FREE_TIER_MESSAGE,
     MIN_MOMENT_S,
     SemanticConfig,
     _call_with_retry,
@@ -16,6 +17,7 @@ from montaje.analysis.semantic.gemini_client import (
     api_key,
     available,
     build_context,
+    is_free_tier_quota,
     reconcile_quotes,
     snap_targets,
     validate_log,
@@ -603,3 +605,53 @@ def test_the_language_is_part_of_the_cache_key(tmp_path):
     b = cache_path(ws, "a_1", "m", 2, "en")
     assert a != b, "switching language must not read back logs quoting the old one"
     assert cache_path(ws, "a_1", "m", 2, None) != a
+
+
+# -- the free tier is a privacy condition, not just a quota ------------------------------
+
+
+def free_tier_error() -> FakeApiError:
+    err = FakeApiError(429)
+    err.args = (
+        "429 RESOURCE_EXHAUSTED. Quota exceeded for metric: "
+        "generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20",
+    )
+    return err
+
+
+def test_a_free_tier_daily_cap_is_recognised():
+    assert is_free_tier_quota(free_tier_error())
+
+
+def test_an_ordinary_rate_limit_is_not_mistaken_for_the_free_tier():
+    assert not is_free_tier_quota(FakeApiError(429))
+    assert not is_free_tier_quota(FakeApiError(503))
+
+
+def test_the_free_tier_cap_is_not_retried(monkeypatch):
+    """A per-day cap cannot be waited out inside a run: the limit is 20 requests against a
+    shoot of 130 clips, so retrying only turns a clear error into a slow one."""
+    monkeypatch.setattr("montaje.analysis.semantic.gemini_client.time.sleep", lambda s: None)
+    calls = []
+
+    def capped():
+        calls.append(1)
+        raise free_tier_error()
+
+    with pytest.raises(FakeApiError):
+        _call_with_retry("x", capped)
+    assert len(calls) == 1
+
+
+def test_the_free_tier_message_names_the_privacy_reason():
+    """Not just a quota: free-tier terms allow the provider to use the footage, and this
+    project defaults to `paid` so personal footage is not sent under them (§10)."""
+    assert "provider_tier" in FREE_TIER_MESSAGE
+    assert "improve its products" in FREE_TIER_MESSAGE
+
+
+def test_the_default_tier_is_paid():
+    assert SemanticConfig().provider_tier == "paid"
+    from montaje.config import load_config
+
+    assert load_config().semantic.provider_tier == "paid"

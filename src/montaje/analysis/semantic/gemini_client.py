@@ -59,6 +59,15 @@ MAX_ATTEMPTS = 7
 RETRY_BASE_S = 2.0
 RETRY_MAX_S = 90.0
 
+FREE_TIER_MESSAGE = (
+    "the request was served on the free tier, whose daily cap (20 requests per model) "
+    "cannot cover a whole shoot — and whose terms allow the provider to use the content "
+    "to improve its products. This project sets semantic.provider_tier=paid so that "
+    "personal footage is not sent under those terms (README §10). Enable billing on the "
+    "API key's own Google Cloud project, or set semantic.provider_tier=free in "
+    "config.yaml to say explicitly that free-tier terms are acceptable for this footage."
+)
+
 
 class GeminiUnavailable(RuntimeError):
     """No SDK or no API key. Semantic analysis is optional; everything else still runs."""
@@ -75,6 +84,9 @@ class SemanticConfig:
     # the answer: quotes come back in it and translated quotes would caption the wrong
     # language over the speaker's own voice.
     language: str | None = None
+    # `paid` refuses to run on the free tier, whose terms allow the provider to use the
+    # content to improve its products (§10). `free` is explicit consent to those terms.
+    provider_tier: str = "paid"
 
 
 @dataclass
@@ -313,6 +325,23 @@ def _status_code(exc: BaseException) -> int | None:
     return status if isinstance(status, int) else None
 
 
+def is_free_tier_quota(exc: BaseException) -> bool:
+    """Whether a 429 is the free tier's *daily* cap rather than a momentary rate limit.
+
+    Worth separating for two reasons. A per-day cap cannot be waited out inside a run — the
+    limit for one model is 20 requests a day, against a shoot of 130 clips — so retrying it
+    only turns a clear error into a slow one.
+
+    And it means the request went out on the free tier, where the provider may use the
+    content to improve its products. `semantic.provider_tier` defaults to `paid` precisely
+    so that someone's personal footage is not sent under those terms (§10), so this is a
+    privacy condition, not just a quota one, and the run stops rather than continuing.
+    """
+    if _status_code(exc) != 429:
+        return False
+    return "free_tier" in str(exc) or "FreeTier" in str(exc)
+
+
 def _is_retryable(exc: BaseException) -> bool:
     """Whether trying the identical request again could plausibly succeed.
 
@@ -320,6 +349,8 @@ def _is_retryable(exc: BaseException) -> bool:
     model) is a fact about the request, and retrying it burns time and quota while hiding
     the real error behind a delay. Only server-side pressure and transport faults retry.
     """
+    if is_free_tier_quota(exc):
+        return False
     code = _status_code(exc)
     if code is not None:
         return code in RETRYABLE_CODES
@@ -404,6 +435,8 @@ def analyze_clip(
             ),
         )
     except Exception as e:  # one refused clip must not lose the other ninety-nine
+        if is_free_tier_quota(e) and cfg.provider_tier != "free":
+            return ClipLogResult(asset_id=asset.asset_id, error=FREE_TIER_MESSAGE)
         return ClipLogResult(asset_id=asset.asset_id, error=f"{type(e).__name__}: {e}")
 
     log_obj = _parse(response, asset.asset_id, cfg)

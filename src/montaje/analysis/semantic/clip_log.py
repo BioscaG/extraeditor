@@ -14,6 +14,7 @@ from pathlib import Path
 from montaje.analysis.local.asr import transcript_text
 from montaje.analysis.semantic import prompts
 from montaje.analysis.semantic.gemini_client import (
+    FREE_TIER_MESSAGE,
     SemanticConfig,
     analyze_clip,
     available,
@@ -49,6 +50,7 @@ def semantic_config(cfg: Config, language: str | None = None) -> SemanticConfig:
         fps_short_clips=cfg.semantic.fps_short_clips,
         media_resolution=cfg.semantic.media_resolution,
         language=language,
+        provider_tier=cfg.semantic.provider_tier,
     )
 
 
@@ -95,6 +97,15 @@ def run_semantic(ws: Workspace, cfg: Config, force: bool = False) -> list[str]:
             if not result.ok:
                 failed += 1
                 lines.append(f"[red]FAIL[/red] {asset.asset_id}: {result.error}")
+                if result.error == FREE_TIER_MESSAGE:
+                    # A condition of the account, not of the clip: every remaining asset
+                    # would fail identically, and each attempt would send more footage
+                    # under terms this project declines. Stop on the first one.
+                    lines.append(
+                        "[yellow]Stopping the semantic pass: the remaining clips would "
+                        "fail the same way.[/yellow]"
+                    )
+                    break
                 continue
 
             atomic_write_text(path, result.log.model_dump_json(indent=2))

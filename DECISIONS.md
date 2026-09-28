@@ -901,3 +901,20 @@ This surfaced only after the repeat decay above broadened coverage: while the pl
 living on 20 good clips the bug was latent, and the moment it spread out it reached the dark
 ones. One put **half a second of black into a finished render at 54.73s**, which nothing in
 plan validation could see and the output auto-checks caught on the muxed file.
+
+---
+
+## 2026-09-28 — A free-tier quota error stops the run, because it is a privacy condition
+
+**Decision:** `is_free_tier_quota` separates the free tier's daily cap from an ordinary rate
+limit. It is not retried, and with `semantic.provider_tier=paid` (the default) it stops the
+whole semantic pass with an explanation rather than failing clip by clip.
+
+**Evidence:** with credit added to the account, requests were still being counted against
+`generativelanguage.googleapis.com/generate_content_free_tier_requests`, **limit 20 per day
+per model**. Two consequences, and the second matters more. A per-day cap cannot be waited
+out inside a run, so blind backoff turns a clear error into a slow one — 130 clips × 7
+attempts × up to 90s. And the request went out on free-tier terms, under which the provider
+may use the content to improve its products. §10 sets `provider_tier: paid` precisely so that
+personal footage is not sent that way, so continuing would have sent 129 more clips under
+terms the project declines. `provider_tier: free` remains available as explicit consent.
