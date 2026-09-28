@@ -262,6 +262,11 @@ def build_plan(
     used: dict[str, list[tuple[float, float]]] = {}
     shot_index = 0
     cursor = 0
+    # Shot ids that open a section. Recorded here rather than recovered afterwards by
+    # comparing timeline positions: the cursor advances by whole shots and rarely lands
+    # exactly on a section boundary, so a frame comparison silently matched nothing and
+    # the edit ended up with no designed transitions at all.
+    section_openers: list[str] = []
 
     for section, want_energy in sections:
         role = section.music_section or "build"
@@ -299,11 +304,13 @@ def build_plan(
                 # Speech needs room to breathe: hold the shot to the spoken range.
                 shot.snap = SnapSpec(**{"in": SnapKind.WORD_START, "out": SnapKind.WORD_END})
 
+            if within_section == 1 and section is not sections[0][0]:
+                section_openers.append(shot.id)
             plan.shots.append(shot)
             cursor += shot.timeline_duration_frames(fps)
 
     _fix_speech_cuts(plan)
-    _add_transitions(plan, sections, style, bpm)
+    _add_transitions(plan, section_openers, style)
     _add_title(plan, title, style, fps)
     return plan
 
@@ -424,29 +431,24 @@ def _versioned(component_id: str) -> str:
     return meta.ref if meta else component_id
 
 
-def _add_transitions(
-    plan: EditPlan, sections: list[tuple[Section, float]], style: Style | None, bpm: float
-) -> None:
-    """Designed transitions at section changes only.
+def _add_transitions(plan: EditPlan, section_openers: list[str], style: Style | None) -> None:
+    """Designed transitions on the shots that open a section, and nowhere else.
 
     §16.4: hard cuts are the default and designed transitions are punctuation. Placing
-    them only at section boundaries keeps the density inside the style limit by
+    them only at section changes keeps the density inside the style's limit by
     construction rather than by pruning afterwards.
     """
-    if style is None or not style.transitions.palette:
+    if style is None or not style.transitions.palette or not section_openers:
         return
     from montaje.library.registry import find
 
-    boundaries = {s.from_frame for s, _ in sections if s.from_frame > 0}
     palette = style.transitions.palette
-
-    for index, shot in enumerate(plan.sorted_shots()):
-        if shot.timeline_in not in boundaries:
+    for index, shot_id in enumerate(section_openers):
+        try:
+            shot = plan.shot(shot_id)
+        except KeyError:
             continue
-        # Pick by motion match where possible: a whip pan only reads well when the
-        # footage already moves that way (§16.4).
-        chosen = palette[index % len(palette)]
-        meta = find(chosen)
+        meta = find(palette[index % len(palette)])
         if meta is None:
             continue
         shot.transition_in = ComponentRef(
@@ -454,6 +456,7 @@ def _add_transitions(
             preset="subtle",
             duration=Duration(beats=meta.duration.default_beats or 0.5),
         )
+        # A section change should land on a bar line, not just any beat.
         shot.snap = SnapSpec(**{"in": SnapKind.DOWNBEAT, "out": shot.snap.out})
 
 

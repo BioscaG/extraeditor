@@ -198,6 +198,26 @@ def debug_rhythm(project: str | None = PROJECT_OPT) -> None:
     console.print(Markdown(report.to_markdown()))
 
 
+@app.command()
+def mcp(
+    project: str | None = PROJECT_OPT,
+    transport: str = typer.Option("stdio", help="stdio | sse | streamable-http"),
+) -> None:
+    """Run the MCP server so an agent (e.g. Claude Code) can direct the edit."""
+    from montaje.director.mcp_server import run
+
+    run(project, transport=transport)
+
+
+@debug_app.command("tools")
+def debug_tools() -> None:
+    """List the tools the MCP server exposes."""
+    from montaje.director.tools import tool_catalog
+
+    for entry in tool_catalog():
+        console.print(f"{entry['name']:<22} {entry['purpose']}")
+
+
 @debug_app.command("tonemap")
 def debug_tonemap(
     clips: list[Path] = typer.Argument(..., help="HDR clips to compare"),

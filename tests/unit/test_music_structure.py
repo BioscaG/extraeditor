@@ -191,3 +191,42 @@ def test_phrase_spans_cover_the_track_without_fragments(structure, track_truth):
             assert a[1] == b[0]
         min_len = 0.5 * phrase_bars * track_truth["bar_s"]
         assert all(b - a >= min_len for a, b in spans), (phrase_bars, spans)
+
+
+# -- editorial priorities when shortening -------------------------------------------------
+
+
+def test_the_drop_survives_every_target(structure):
+    """A short edit that keeps the packaging and loses the drop is the wrong trade."""
+    from montaje.music.edit import timeline_sections
+
+    for target in (16.0, 24.0, 32.0, 48.0, 64.0):
+        fit = fit_to_duration(structure, target, tolerance_s=4.0)
+        roles = {s.role for s in timeline_sections(structure, fit, 30.0)}
+        assert "drop" in roles, (target, roles, fit.notes)
+
+
+def test_a_mid_length_target_keeps_a_beginning_and_an_ending(structure):
+    from montaje.music.edit import timeline_sections
+
+    fit = fit_to_duration(structure, 32.0, tolerance_s=4.0)
+    roles = [s.role for s in timeline_sections(structure, fit, 30.0)]
+    assert roles[0] == "intro"
+    assert roles[-1] == "outro"
+
+
+def test_duration_comparisons_are_made_at_frame_resolution():
+    """Phrase lengths are never round numbers, so an exact comparison is a coin flip."""
+    from montaje.music.edit import fits_within
+
+    assert fits_within(16.0016, 16.0, fps=30.0)
+    assert fits_within(16.0, 16.0, fps=30.0)
+    assert not fits_within(16.1, 16.0, fps=30.0)
+
+
+def test_the_drop_is_the_most_protected_role():
+    from montaje.music.edit import EDGE_PROTECTION, ROLE_PROTECTION
+
+    # It must outrank even an intro phrase that is also the first phrase, or a short
+    # edit keeps the intro and throws away the payoff.
+    assert ROLE_PROTECTION["drop"] > ROLE_PROTECTION["intro"] + EDGE_PROTECTION

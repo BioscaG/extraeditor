@@ -22,6 +22,18 @@ from montaje.music.structure import MusicStructure
 PHRASE_BAR_OPTIONS = (16, 8, 4)
 
 
+def fits_within(duration_s: float, budget_s: float, fps: float = 30.0) -> bool:
+    """Whether `duration_s` fits `budget_s`, compared at frame resolution.
+
+    Phrase lengths come from a measured beat period, so they are never exact round
+    numbers: two 8-second phrases sum to 16.0016 s and fail a literal `<= 16.0`. A
+    sub-frame difference is below the timeline's own resolution and must not change a
+    decision — this exact comparison silently dropped the intro and outro from short
+    edits twice before being tied to the frame grid.
+    """
+    return round(duration_s * fps) <= round(budget_s * fps)
+
+
 @dataclass(frozen=True)
 class MusicFit:
     edits: list[MusicEdit]
@@ -71,11 +83,19 @@ def phrase_spans(structure: MusicStructure, phrase_bars: int) -> list[tuple[floa
     return spans
 
 
-def _rank_removable(structure: MusicStructure, phrases: list[tuple[float, float]]) -> list[int]:
-    """Phrase indices ordered by how safe they are to drop.
+# How strongly each section role resists being cut. The drop is the payoff the whole
+# edit is built around, so it outranks everything — including the combined protection
+# an intro phrase gets from being both an intro and the first phrase. Getting this
+# ordering wrong silently produced short edits with no drop at all.
+ROLE_PROTECTION = {"drop": 8.0, "intro": 2.0, "outro": 2.0, "build": 0.5, "break": 0.0}
+EDGE_PROTECTION = 2.0
 
-    Prefer low-energy, mid-track phrases: the intro establishes the track, the
-    outro ends it, and the drop is the payoff the edit is built around.
+
+def _rank_removable(structure: MusicStructure, phrases: list[tuple[float, float]]) -> list[int]:
+    """Phrase indices ordered by how safe they are to drop, safest first.
+
+    Prefer low-energy, mid-track phrases: the intro establishes the track and the outro
+    ends it, but the drop is what the viewer came for.
     """
     n = len(phrases)
     scored: list[tuple[float, int]] = []
@@ -84,11 +104,11 @@ def _rank_removable(structure: MusicStructure, phrases: list[tuple[float, float]
         section = structure.section_at(mid)
         energy = section.energy if section else 0.5
         role = section.role if section else "build"
-        penalty = {"drop": 3.0, "intro": 2.0, "outro": 2.0}.get(role, 0.0)
+        protection = ROLE_PROTECTION.get(role, 0.0)
         # Edge phrases are structurally load-bearing even inside a long section.
         if i == 0 or i == n - 1:
-            penalty += 2.0
-        scored.append((energy + penalty, i))
+            protection += EDGE_PROTECTION
+        scored.append((energy + protection, i))
     return [i for _, i in sorted(scored)]
 
 
@@ -107,16 +127,28 @@ def fit_to_duration(
                         removed_s=0.0, repeated_s=0.0, phrase_bars=0,
                         notes="empty track")
 
-    best: MusicFit | None = None
+    candidates: list[MusicFit] = []
     for phrase_bars in PHRASE_BAR_OPTIONS:
         phrases = phrase_spans(structure, phrase_bars)
         if len(phrases) < 2:
             continue
-        fit = _fit_with_phrases(structure, phrases, target_s, crossfade_frames, fps, ending, phrase_bars)
-        if abs(fit.total_s - target_s) <= tolerance_s:
-            return fit
-        if best is None or abs(fit.total_s - target_s) < abs(best.total_s - target_s):
-            best = fit
+        candidates.append(_fit_with_phrases(
+            structure, phrases, target_s, tolerance_s, crossfade_frames, fps,
+            ending, phrase_bars,
+        ))
+
+    # Among fits that hit the target, prefer the one that preserves the most section
+    # roles, then the longest phrases. Returning the first acceptable grid instead
+    # meant a short target got the coarser grid and lost the intro and outro — the
+    # coarse grid only wins on join inaudibility, and keeping the track's shape
+    # matters more than that.
+    acceptable = [
+        f for f in candidates if fits_within(abs(f.total_s - target_s), tolerance_s, fps)
+    ]
+    if acceptable:
+        return max(acceptable, key=lambda f: _structure_score(structure, f, target_s, fps))
+
+    best = min(candidates, key=lambda f: abs(f.total_s - target_s)) if candidates else None
     if best is None:
         # Shorter than one phrase at every grid: nothing can be removed or repeated
         # without cutting mid-phrase, so pass the track through unedited.
@@ -129,10 +161,26 @@ def fit_to_duration(
     return best
 
 
+def _structure_score(
+    structure: MusicStructure, fit: MusicFit, target_s: float, fps: float
+) -> tuple:
+    """Rank a candidate fit. Higher is better; compared lexicographically.
+
+    The drop comes first and outranks the role count, because a short edit that keeps
+    an intro and an outro but loses the drop has kept the packaging and thrown away the
+    contents. Phrase length is the last structural tie-break: a coarser grid makes the
+    joins less audible, which matters only once the shape is right.
+    """
+    roles = {s.role for s in timeline_sections(structure, fit, fps)}
+    has_drop = "drop" in roles or not any(s.role == "drop" for s in structure.sections)
+    return (has_drop, len(roles), fit.phrase_bars, -abs(fit.total_s - target_s))
+
+
 def _fit_with_phrases(
     structure: MusicStructure,
     phrases: list[tuple[float, float]],
     target_s: float,
+    tolerance_s: float,
     crossfade_frames: int,
     fps: float,
     ending: str,
@@ -144,9 +192,27 @@ def _fit_with_phrases(
     repeated: list[int] = []
 
     if target_s < duration:
+        # The first and last phrases give the edit an arrival and an ending. Keeping
+        # them is what stops a short target from collapsing into a bare drop with no
+        # beginning or end — so they are excluded from removal entirely rather than
+        # merely penalised, as long as there is room for both plus something between.
+        protected: set[int] = set()
+        if len(phrases) >= 3:
+            edge_s = (phrases[0][1] - phrases[0][0]) + (phrases[-1][1] - phrases[-1][0])
+            shortest_middle = min(b - a for a, b in phrases[1:-1])
+            # Protect the edges when the result can still hold them plus at least one
+            # middle phrase. The budget is the target *plus its tolerance*, because
+            # spending the tolerance to keep a beginning and an ending is exactly what
+            # it is for — an arbitrary fraction of the target instead missed this case
+            # by 1.6 milliseconds.
+            if fits_within(edge_s + shortest_middle, target_s + tolerance_s, fps):
+                protected = {0, len(phrases) - 1}
+
         for i in _rank_removable(structure, phrases):
             if duration - removed_s <= target_s:
                 break
+            if i in protected:
+                continue
             length = phrases[i][1] - phrases[i][0]
             if duration - removed_s - length < target_s - length / 2:
                 continue  # dropping this one would overshoot below the target
@@ -158,9 +224,14 @@ def _fit_with_phrases(
         order = list(reversed(_rank_removable(structure, phrases)))
         total = duration
         for i in order:
-            if total >= target_s:
+            if fits_within(target_s, total, fps):
                 break
             length = phrases[i][1] - phrases[i][0]
+            # Stop if one more phrase would land further from the target than stopping
+            # here does: overshooting by a whole phrase to cover a sub-frame shortfall
+            # is the wrong trade, and comparing raw floats caused exactly that.
+            if abs(total + length - target_s) > abs(total - target_s):
+                break
             repeated.append(i)
             total += length
 

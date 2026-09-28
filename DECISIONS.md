@@ -188,3 +188,126 @@ one 16-bar phrase is less audible than removing four 4-bar ones. `phrase_spans` 
 shorter than half a phrase into their neighbour: the first downbeat is almost never at exactly 0.0,
 and naively prepending it produced a 7 ms "phrase" that rounded to zero timeline frames and
 silently corrupted the edit's frame positions.
+
+---
+
+## 2026-09-28 — Component metadata is read from TypeScript, not duplicated in Python
+
+**Decision:** `library.registry` bundles a tiny TS script with esbuild and runs it under
+Node to get the real `meta` objects out of the TSX components. A source-parsing fallback
+covers machines without Node.
+
+**Alternatives:** maintain a parallel Python declaration per component; generate Python
+from TS at build time.
+
+**Evidence:** `meta` lives next to the code it describes, so it cannot drift from the
+component — a duplicate in Python would. The fallback demonstrates why the Node path
+matters: parsing the source reads `duration.minFrames` as the literal default (1–300)
+instead of resolving `timing.sweep.minFrames` (6–20), so the validator would accept
+transition durations the component cannot render.
+
+---
+
+## 2026-09-28 — The baseline SFX library is synthesized, not downloaded
+
+**Decision:** `library/sfx/make_sfx.py` generates 13 SFX procedurally (whoosh, impact,
+riser, downlifter, tick, pop, sub drop, crowd bed, tape stop) and writes `sfx.yaml` with
+`license: CC0-1.0` and a measured `peak_offset_s` per file.
+
+**Alternatives:** ship curated CC0 packs; fetch at install time.
+
+**Evidence:** §14.1 forbids adding a file without a known license, and §18.2 makes an
+unlicensed SFX a hard render error. Synthesizing means the code *is* the provenance, so
+the license claim is auditable and nothing can vanish. Curated packs can be added
+alongside with their own per-file terms. The peak offset matters because the mixer
+aligns the *hit* to the anchor frame, not the file start.
+
+---
+
+## 2026-09-28 — Order of operations: rails, then spotting and speech repair
+
+**Decision:** the render pipeline runs rails → speech-cut repair → SFX spotting →
+validate → conform → mix → compose → mux. `montaje plan` also spots, so a plan on disk
+is complete, but the render re-spots after the rails.
+
+**Evidence:** every step after the rails depends on the final timeline, and getting this
+order wrong produced four distinct hard-error classes on the first real run:
+
+| symptom | cause |
+|---|---|
+| speech overlapping speech | a J-cut on every speaking shot reached into the previous line |
+| `src_out` past end of file | word post-roll had nothing clamping it to the asset duration |
+| 3-frame gaps (black frames) | a forward beat snap opened a gap nothing closed |
+| SFX anchored past the timeline end | the rails moved shots but not section boundaries |
+
+The rails now clamp to asset durations, close snap gaps by extending the previous shot
+into its handles, and relayout `concept.sections` along with the shots. Sections are
+timeline positions, so the rails own them too.
+
+---
+
+## 2026-09-28 — The builder's minimum shot length must not undercut the rails'
+
+**Decision:** `plan.build.ABSOLUTE_MIN_SHOT_S` is 0.35 s, above `rails.min_shot_s` (0.3).
+
+**Evidence:** it was 0.25 s. The drop section's 0.5-beat target at 120 BPM, times the
+0.5 variation multiplier, produced 0.125 s shots which the builder clamped to 0.25 s and
+the rails then deleted for being under 0.3 s. The edit silently lost 9 of its 40 seconds
+and the duration check failed with no indication why.
+
+---
+
+## 2026-09-28 — Duration comparisons are made at frame resolution
+
+**Decision:** `music.edit.fits_within` compares durations as rounded frame counts.
+
+**Evidence:** phrase lengths derive from a *measured* beat period, so they are never
+round: two nominally 8-second phrases sum to 16.0016 s and fail a literal `<= 16.0`.
+That 1.6 ms decided three separate behaviours wrongly — edge protection did not engage,
+so short edits lost their intro and outro; and the lengthening loop added one phrase too
+many, overshooting a 120 s target to 128 s. A sub-frame difference is below the
+timeline's own resolution and must never change a decision.
+
+---
+
+## 2026-09-28 — Fit-to-duration is chosen by structure preserved, not by first fit
+
+**Decision:** `fit_to_duration` evaluates all three phrase grids and picks by
+`(drop present, roles preserved, phrase length, closeness to target)`.
+
+**Alternatives:** return the first grid within tolerance (the original), which meant
+longest-phrases-first always won.
+
+**Evidence:** returning the first acceptable grid gave a 30-second target a 16-bar grid
+holding only the drop. Coarser phrases only buy less audible joins; keeping the track's
+shape matters more. The drop is ranked above the role *count* because a short edit that
+keeps an intro and an outro but loses the drop has kept the packaging and thrown away
+the contents. Measured on the fixture: every target from 30 s up now keeps
+intro/drop/outro, and 40/80/120 s land exactly on target.
+
+---
+
+## 2026-09-28 — MCP server on the 2.x SDK; tools are plain functions
+
+**Decision:** tool logic lives in `director/tools.py` with no MCP import; `mcp_server.py`
+is thin wrappers around it. Errors are returned as `{"error": ...}` data, never raised.
+
+**Evidence:** the same functions back both the MCP server and the future built-in loop
+(§16.1), so the two cannot drift, and the tools are directly unit-testable. The MCP 2.x
+SDK renamed `FastMCP` to `MCPServer`. Errors are data because a tool that raises ends the
+agent's turn instead of letting it recover — which is the difference between the agent
+fixing a typo'd asset id and the session dying.
+
+---
+
+## 2026-09-28 — Remotion resolves intermediates via `staticFile` and `--public-dir`
+
+**Decision:** resolved shots carry an intermediate *filename*; the composition wraps it
+in `staticFile()` and the render is invoked with `--public-dir` pointing at the project's
+intermediates directory.
+
+**Evidence:** Remotion serves assets over HTTP from its bundle, so an absolute
+filesystem path is looked up *inside* the bundle and 404s — every frame failed. Copying
+intermediates into `public/` would duplicate ProRes files; `--public-dir` points at them
+where they already are. Also pinned `zod` to the exact version Remotion requires, since a
+mismatch produces "unclear errors" by its own warning's admission.
