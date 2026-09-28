@@ -79,3 +79,35 @@ def test_empty_audio_yields_a_safe_default(tmp_path):
                 "anullsrc=r=16000:cl=mono:d=0.05", str(silent)])
     grid = analyze_beats(silent)
     assert grid.bpm > 0
+
+
+# -- the half-beat grid ------------------------------------------------------------------
+
+
+def test_half_beats_interleave_the_off_beats():
+    grid = BeatGrid(bpm=120.0, beats=[0.0, 0.5, 1.0, 1.5])
+    assert grid.half_beats[:6] == [0.0, 0.25, 0.5, 0.75, 1.0, 1.25]
+
+
+def test_half_beats_are_interpolated_from_measured_beats_not_the_nominal_period():
+    """The off-beats must inherit the fitted grid's accuracy. A track whose real tempo is
+    120.094 BPM drifts 75ms from nominal over 96s, and so would its off-beats."""
+    grid = BeatGrid(bpm=120.0, beats=[0.0, 0.52, 1.06])
+    assert grid.half_beats[1] == pytest.approx(0.26)
+    assert grid.half_beats[3] == pytest.approx(0.79)
+
+
+def test_half_beats_extend_past_the_final_beat():
+    """A cut just past the last beat still needs a position to land on."""
+    grid = BeatGrid(bpm=120.0, beats=[0.0, 0.5, 1.0])
+    assert grid.half_beats[-1] == pytest.approx(1.25)
+
+
+def test_half_beats_of_a_degenerate_grid_are_the_beats():
+    assert BeatGrid(bpm=120.0, beats=[0.4]).half_beats == [0.4]
+    assert BeatGrid(bpm=120.0, beats=[]).half_beats == []
+
+
+def test_half_beat_period_is_half_the_beat_period():
+    grid = BeatGrid(bpm=128.0)
+    assert grid.half_beat_period_s == pytest.approx(grid.beat_period_s / 2)

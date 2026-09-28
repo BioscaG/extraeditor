@@ -3,16 +3,36 @@ version: 1
 
 # Shot lengths in beats per section role. The drop cuts twice as fast as the build,
 # which is what makes the drop *feel* like a drop even before the music arrives.
+#
+# Every value is a **whole number of beats**, and that is the point rather than a rounding.
+# The snap grid is the beat, so a shot lasting half a beat puts the cut that follows it
+# between two beats by construction — the first real run asked for 0.5-beat shots in the
+# drop and for 75% of cuts on the grid, and got 51%, because those two targets contradict
+# each other. Whole-beat shots can satisfy both.
+#
+# They are also double the values these had when they were only ever measured against
+# synthetic fixtures. On real footage a 0.5-beat shot at 120 BPM is 0.25s — seven frames,
+# which is less time than it takes to recognise what is in the frame. Fast cutting reads as
+# energy only while the viewer can still follow it.
 pacing:
   avg_shot_beats:
-    intro: 2.0
-    build: 1.0
-    drop: 0.5
-    break: 1.5
-    outro: 2.0
-  # Not 1.0: a fully on-grid edit reads as mechanical. A quarter of cuts placed off
-  # the grid on purpose is what makes it feel edited by a person (§16.4).
-  on_grid_ratio: 0.75
+    intro: 4.0
+    build: 2.0
+    drop: 1.0
+    break: 3.0
+    outro: 4.0
+  # 1.0, and the grid means the eighth-note grid — every beat and every off-beat.
+  #
+  # This was 0.75, on the reasoning that a fully on-grid edit reads as mechanical. Two
+  # things were wrong with it. No code ever placed a cut off the grid on purpose, so the
+  # 25% was only ever made of accidents. And there is no room for the gesture anyway: at
+  # 120 BPM the grid positions are 250ms apart and the snap window is 120ms, so a cut far
+  # enough off the grid to be deliberate is indistinguishable from a careless one.
+  #
+  # What makes an edit feel made by a person is that its shots are not all the same length,
+  # which `avg_shot_beats` plus the builder's variation pattern already deliver. The rhythm
+  # report measures that directly now, as shot-length spread.
+  on_grid_ratio: 1.0
 
 transitions:
   # Ordered by how often they should appear. The dip is first because it is the one

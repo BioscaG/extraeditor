@@ -223,20 +223,33 @@ def debug_rhythm(project: str | None = PROJECT_OPT) -> None:
 
     from montaje.cli_plan import latest_plan, load_music_context, resolve_workspace
     from montaje.index.store import Store
+    from montaje.plan.prepare import prepare_plan
     from montaje.plan.rhythm import build_rhythm_report
     from montaje.styles.registry import load_style
 
     ws = resolve_workspace(project)
+    cfg = load_config(ws.root)
     edit_plan = latest_plan(ws)
     if edit_plan is None:
         raise typer.BadParameter("no plan found; run `montaje plan` first")
     structure, _, _ = load_music_context(ws)
     with Store(ws.db_path) as store:
-        events = {a.asset_id: store.get_events(a.asset_id) for a in store.list_assets()}
+        assets = {a.asset_id: a for a in store.list_assets()}
+        events = {aid: store.get_events(aid) for aid in assets}
+    style = load_style(edit_plan.style)
+    # The rails first, because they are what the render measures. Reading the plan file
+    # straight off disk reports on the pre-rails *request*: it showed 58% of cuts off the
+    # musical grid for an edit whose cuts the rails were about to put on it.
+    prepared = prepare_plan(
+        edit_plan, ws=ws, cfg=cfg, events=events, assets=assets,
+        structure=structure, style=style,
+    )
     report = build_rhythm_report(
-        edit_plan, structure=structure, style=load_style(edit_plan.style), events=events
+        prepared.plan, structure=structure, style=style, events=events
     )
     console.print(Markdown(report.to_markdown()))
+    if prepared.summary:
+        console.print(f"[dim]rails: {prepared.summary}[/dim]")
 
 
 @app.command()

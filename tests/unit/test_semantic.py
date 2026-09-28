@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import pytest
+
 from montaje.analysis.semantic import prompts
 from montaje.analysis.semantic.clip_log import cache_path, run_semantic, semantic_config
 from montaje.analysis.semantic.gemini_client import (
     MIN_MOMENT_S,
     SemanticConfig,
+    _call_with_retry,
+    _is_retryable,
     _parse,
     analyze_clip,
     api_key,
     available,
     build_context,
+    reconcile_quotes,
     snap_targets,
     validate_log,
 )
@@ -433,3 +438,168 @@ def test_the_planner_optimizes_what_the_rhythm_report_measures():
     # The report derives visual energy from motion events, so with no clip log the
     # planner's energy must come from motion too.
     assert Candidate("a", 0, 2, motion=3.0).energy_value > 0.0
+
+
+# -- retrying transient failures -------------------------------------------------------
+
+
+class FakeApiError(Exception):
+    """Stands in for the SDK's APIError, which carries the HTTP status on `.code`."""
+
+    def __init__(self, code: int):
+        super().__init__(f"{code} error")
+        self.code = code
+
+
+def test_server_pressure_is_retryable():
+    """The first real call this project ever made came back 503 'high demand'."""
+    for code in (408, 429, 500, 502, 503, 504):
+        assert _is_retryable(FakeApiError(code))
+
+
+def test_a_fact_about_the_request_is_not_retryable():
+    """402 means no credit and 403 a bad key; retrying either burns a minute of backoff
+    and then reports the same error, with the real cause hidden behind the delay."""
+    for code in (400, 401, 402, 403, 404, 422):
+        assert not _is_retryable(FakeApiError(code))
+
+
+def test_a_dropped_connection_is_retryable():
+    """No status at all means the request never reached the service."""
+    assert _is_retryable(ConnectionError("reset"))
+    assert _is_retryable(TimeoutError())
+
+
+def test_an_unknown_error_is_not_retried():
+    assert not _is_retryable(ValueError("nonsense"))
+
+
+def test_retry_returns_the_first_success(monkeypatch):
+    monkeypatch.setattr("montaje.analysis.semantic.gemini_client.time.sleep", lambda s: None)
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise FakeApiError(503)
+        return "done"
+
+    assert _call_with_retry("x", flaky) == "done"
+    assert len(calls) == 3
+
+
+def test_retry_gives_up_and_raises_the_last_error(monkeypatch):
+    monkeypatch.setattr("montaje.analysis.semantic.gemini_client.time.sleep", lambda s: None)
+    calls = []
+
+    def always_busy():
+        calls.append(1)
+        raise FakeApiError(503)
+
+    with pytest.raises(FakeApiError):
+        _call_with_retry("x", always_busy, attempts=4)
+    assert len(calls) == 4
+
+
+def test_a_permanent_error_is_raised_on_the_first_attempt(monkeypatch):
+    monkeypatch.setattr("montaje.analysis.semantic.gemini_client.time.sleep", lambda s: None)
+    calls = []
+
+    def no_credit():
+        calls.append(1)
+        raise FakeApiError(402)
+
+    with pytest.raises(FakeApiError):
+        _call_with_retry("x", no_credit)
+    assert len(calls) == 1, "a 402 must not be retried"
+
+
+# -- quotes come from the transcript ----------------------------------------------------
+
+
+def words(*items) -> list[Event]:
+    return [
+        Event(asset_id="a", analyzer="asr@1", type="word", t0=t0, t1=t1, data={"text": text})
+        for t0, t1, text in items
+    ]
+
+
+def log_with_quote(t0: float, t1: float, text: str) -> ClipLog:
+    return ClipLog(asset_id="a", summary="s", quotes=[Quote(t0=t0, t1=t1, text=text)])
+
+
+def test_a_translated_quote_is_replaced_by_the_transcript():
+    """Asked in English about Spanish footage, the model returned 'Here we are, I don't see
+    anything' for '¿Puedes escuchar?' — fluent, and not what anybody said."""
+    events = words((17.15, 17.85, "¿Puedes"), (17.85, 18.17, "escuchar?"))
+    out, notes = reconcile_quotes(log_with_quote(17.1, 18.2, "Can you hear it?"), events)
+    assert out.quotes[0].text == "¿Puedes escuchar?"
+    assert notes
+
+
+def test_the_quote_span_is_tightened_onto_the_words():
+    events = words((17.15, 17.85, "¿Puedes"), (17.85, 18.17, "escuchar?"))
+    out, _ = reconcile_quotes(log_with_quote(16.9, 18.6, "whatever"), events)
+    assert (out.quotes[0].t0, out.quotes[0].t1) == (17.15, 18.17)
+
+
+def test_a_quote_with_no_transcribed_speech_under_it_is_unusable():
+    """Where the rest of the clip did transcribe, silence here is evidence."""
+    events = words((1.0, 1.4, "hola"))
+    out, notes = reconcile_quotes(log_with_quote(30.0, 33.0, "invented line"), events)
+    assert out.quotes[0].usable is False
+    assert any("no transcribed speech" in n for n in notes)
+
+
+def test_a_clip_with_no_transcript_leaves_quotes_alone():
+    """ASR is VAD-gated, so no words can mean it found no speech — not that the model lied."""
+    out, notes = reconcile_quotes(log_with_quote(1.0, 2.0, "oh my god"), [])
+    assert out.quotes[0].text == "oh my god"
+    assert out.quotes[0].usable is True
+    assert notes == []
+
+
+def test_a_matching_quote_is_not_reported_as_rewritten():
+    events = words((1.0, 1.3, "vamos"))
+    out, notes = reconcile_quotes(log_with_quote(1.0, 1.3, "vamos"), events)
+    assert out.quotes[0].text == "vamos"
+    assert notes == []
+
+
+def test_mixed_language_speech_is_kept_as_spoken():
+    """The speakers switch language mid-clip; the transcript is the only thing that knows."""
+    events = words((0.0, 0.4, "¿Puedes"), (0.4, 0.8, "escuchar?"), (1.0, 1.4, "oh"),
+                   (1.4, 1.6, "my"), (1.6, 1.9, "god"))
+    out, _ = reconcile_quotes(log_with_quote(0.0, 2.0, "Can you hear it? amazing"), events)
+    assert out.quotes[0].text == "¿Puedes escuchar? oh my god"
+
+
+# -- the language hint ------------------------------------------------------------------
+
+
+def test_the_language_hint_is_omitted_when_none_is_declared():
+    """Mixed-language footage declares no language, and a wrong hint is worse than none."""
+    assert "mostly in" not in prompts.clip_log_prompt("ctx", None)
+
+
+def test_the_language_hint_names_the_language():
+    assert "Spanish" in prompts.clip_log_prompt("ctx", "es")
+
+
+def test_an_unknown_language_code_is_passed_through():
+    assert "sw" in prompts.clip_log_prompt("ctx", "sw")
+
+
+def test_the_verbatim_rule_always_applies():
+    """It is in the system prompt, not the per-language hint: it holds with no language too."""
+    assert "never translated" in prompts.SYSTEM
+
+
+def test_the_language_is_part_of_the_cache_key(tmp_path):
+    from montaje.workspace import Workspace
+
+    ws = Workspace(tmp_path / "p")
+    a = cache_path(ws, "a_1", "m", 2, "es")
+    b = cache_path(ws, "a_1", "m", 2, "en")
+    assert a != b, "switching language must not read back logs quoting the old one"
+    assert cache_path(ws, "a_1", "m", 2, None) != a

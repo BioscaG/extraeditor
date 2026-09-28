@@ -38,8 +38,29 @@ class RailContext:
         return self.grid.beats if self.grid else []
 
     @property
+    def half_beats(self) -> list[float]:
+        return self.grid.half_beats if self.grid else []
+
+    @property
     def downbeats(self) -> list[float]:
         return self.grid.downbeats if self.grid else []
+
+
+TIMELINE_KINDS = (SnapKind.BEAT, SnapKind.HALF_BEAT, SnapKind.DOWNBEAT, SnapKind.BAR)
+
+
+def _timeline_kind(shot) -> SnapKind | None:
+    """Which musical position this shot's start is pulled to, or None for no snapping.
+
+    `snap.timeline` is the field that means this. A timeline kind left in `snap.in_` is
+    still honoured, so plans written before the two domains were separated — and agents
+    that learned the older shape — keep working.
+    """
+    if shot.snap.timeline in TIMELINE_KINDS:
+        return shot.snap.timeline
+    if shot.snap.in_ in TIMELINE_KINDS:
+        return shot.snap.in_
+    return None
 
 
 @dataclass
@@ -202,29 +223,60 @@ def _snap_and_relayout_timeline(plan: EditPlan, ctx: RailContext, report: RailRe
     cursor = 0
     for index, shot in enumerate(shots):
         target = cursor
-        if shot.snap.in_ in (SnapKind.BEAT, SnapKind.DOWNBEAT, SnapKind.BAR):
+        timeline_kind = _timeline_kind(shot)
+        if timeline_kind is not None:
             snapped = snap_timeline_frame(
-                cursor, shot.snap.in_, fps, ctx.beats, ctx.downbeats,
-                window_ms=ctx.beat_window_ms,
+                cursor, timeline_kind, fps, ctx.beats, ctx.downbeats,
+                window_ms=ctx.beat_window_ms, half_beats=ctx.half_beats,
             )
-            candidate = max(cursor, snapped)
-            gap = candidate - cursor
-            if gap > 0 and index > 0:
-                if _extend(shots[index - 1], gap, fps, ctx):
-                    target = candidate
+            # Either direction. A later position needs the previous shot to have handle
+            # material to grow into; an earlier one needs it to have frames to give up.
+            shift = snapped - cursor
+            if shift != 0 and index > 0:
+                if _resize(shots[index - 1], shift, fps, ctx):
+                    target = snapped
                 # else: keep `target = cursor` and let the shot sit off the grid,
                 # which the rhythm report will show as an off-grid cut.
-            else:
-                target = candidate
+            elif shift > 0:
+                # Nothing precedes the first shot, so a later start is simply a later start.
+                target = snapped
             if target != cursor:
                 report.timeline_snaps.append(
-                    f"{shot.id} frame {cursor}→{target} ({shot.snap.in_.value})"
+                    f"{shot.id} frame {cursor}→{target} ({timeline_kind.value})"
                 )
         if shot.timeline_in != target:
             report.shots_relaid_out += 1
             shot.timeline_in = target
         cursor = target + shot.timeline_duration_frames(fps)
     plan.shots = shots
+
+
+def _resize(shot: Shot, frames: int, fps: float, ctx: RailContext) -> bool:
+    """Change a shot's timeline length by `frames`, positive or negative. True if applied.
+
+    Shortening is what makes snapping *backwards* possible, and without it half the grid was
+    unreachable: the rails only ever moved a cut later, because moving it earlier means the
+    preceding shot has to give up frames and nothing could do that. Over a 108-shot edit only
+    10 cuts were being snapped at all. Extending needs handle material and often has none;
+    shortening only needs the shot to stay above the minimum, so it nearly always succeeds.
+    """
+    if frames >= 0:
+        return _extend(shot, frames, fps, ctx)
+    target_frames = shot.timeline_duration_frames(fps) + frames
+    if target_frames < max(1, round(ctx.min_shot_s * fps)):
+        return False
+    original = shot.src_out
+    guess = shot.src_in + target_frames / fps
+    step = 1.0 / (fps * 4)
+    for offset in (0, 1, -1, 2, -2):
+        candidate = guess + offset * step
+        if candidate <= shot.src_in:
+            continue
+        shot.src_out = round(candidate, 4)
+        if shot.timeline_duration_frames(fps) == target_frames:
+            return True
+    shot.src_out = original
+    return False
 
 
 def _extend(shot: Shot, frames: int, fps: float, ctx: RailContext) -> bool:

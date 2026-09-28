@@ -13,22 +13,18 @@ from pathlib import Path
 from montaje.color.grade import Grade, grade_from_style
 from montaje.color.normalize import corrections_for_asset
 from montaje.config import Config
-from montaje.index.conventions import apply_conventions, load_conventions
 from montaje.index.store import Store
 from montaje.library.registry import licensed_sfx_ids, sfx_paths, sfx_peak_offsets, stable_refs
 from montaje.models.asset import Asset
 from montaje.models.editplan import EditPlan
 from montaje.music.beats import BeatGrid
 from montaje.music.structure import MusicStructure
-from montaje.plan.build import drop_empty_captions, fix_speech_cuts
-from montaje.plan.rails import RailContext, apply_rails
+from montaje.plan.prepare import prepare_plan
 from montaje.plan.rhythm import build_rhythm_report
-from montaje.plan.snap import SnapCandidates
 from montaje.plan.validate import ValidationContext, errors, validate, warnings
 from montaje.render import remotion_bridge as remotion
 from montaje.render.conform import conform_plan
 from montaje.sound.mix import mix_spec_from_plan, render_mix
-from montaje.sound.spotting import apply_spotting
 from montaje.styles.registry import load_style
 from montaje.workspace import Workspace, atomic_write_text
 
@@ -97,41 +93,15 @@ def render(
 
     # -- rails (non-bypassable, §18) -------------------------------------------------
     #
-    # The order here is the whole point of this function, and it follows one rule:
-    # everything that changes a shot's **source range** runs *before* the rails, and
-    # everything that depends on its final **timeline position** runs after.
-    #
-    # Conventions trim source ranges, so they go first — applied afterwards they shortened
-    # shots the rails had already laid out and opened one- and two-frame gaps, which render
-    # as black frames and fail validation. Speech repair, caption repair and SFX spotting
-    # all read timeline positions, so they must come after snapping has moved them.
+    # Shared with the rhythm report, so that what is measured is what is rendered. See
+    # `plan/prepare.py` for the ordering rule the sequence follows.
     if apply_rails_first:
-        # Confirmed conventions trim the motif out of every shot, including shots the
-        # agent wrote by hand rather than the builder choosing (§12).
-        convention_report = apply_conventions(
-            plan, load_conventions(ws), events, min_shot_s=cfg.rails.min_shot_s
+        prepared = prepare_plan(
+            plan, ws=ws, cfg=cfg, events=events, assets=assets,
+            structure=structure, style=style,
         )
-
-        rail_ctx = RailContext(
-            candidates={aid: SnapCandidates.from_events(evs) for aid, evs in events.items()},
-            grid=grid,
-            fps=plan.format.fps,
-            beat_window_ms=cfg.snap.beat_window_ms,
-            word_preroll_s=cfg.snap.word_preroll_s,
-            word_postroll_s=cfg.snap.word_postroll_s,
-            min_shot_s=cfg.rails.min_shot_s,
-            asset_durations={aid: a.duration_s for aid, a in assets.items()},
-        )
-        plan, rail_report = apply_rails(plan, rail_ctx)
-        result.rails_summary = rail_report.summary()
-        if convention_report.changed:
-            result.rails_summary += f"; {convention_report.summary()}"
-
-        fix_speech_cuts(plan)
-        dropped_captions = drop_empty_captions(plan, _word_spans(events))
-        if dropped_captions:
-            result.rails_summary += f"; {dropped_captions} empty captions dropped"
-        plan = apply_spotting(plan, structure=structure, style=style)
+        plan = prepared.plan
+        result.rails_summary = prepared.summary
 
     # -- validation ------------------------------------------------------------------
     vctx = ValidationContext.from_events(
@@ -320,17 +290,6 @@ def _words_for(plan: EditPlan, events: dict[str, list]) -> dict[str, list[dict]]
     return out
 
 
-def _word_spans(events: dict[str, list]) -> dict[str, list[tuple[float, float]]]:
-    """ASR word ranges per asset, for post-rails caption repair."""
-    out: dict[str, list[tuple[float, float]]] = {}
-    for asset_id, evs in events.items():
-        spans = [
-            (e.t0, e.t1) for e in evs
-            if e.analyzer.startswith("asr") and e.type == "word"
-        ]
-        if spans:
-            out[asset_id] = spans
-    return out
 
 
 def _subject_centers(

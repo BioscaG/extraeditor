@@ -18,7 +18,7 @@ cached clip log rather than mixing outputs from two different questions.
 
 from __future__ import annotations
 
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2
 
 SYSTEM = """\
 You are a film editor's assistant logging raw footage. You watch one clip and describe \
@@ -35,6 +35,10 @@ are more useful than ten mediocre ones.
 - Note problems honestly in `issues`. An editor needs to know a shot is unusable.
 - If the clip contains nothing worth cutting to, return an empty `moments` list. Saying \
 so is more useful than inventing something.
+- `quotes.text` is a transcription, not a paraphrase: the exact words, in the language \
+they were spoken in, never translated, tidied or completed. If a line is unclear, set \
+`usable` to false instead of guessing at it. Captions are shown over the speaker's own \
+voice, so any word they did not say is wrong on screen.
 """
 
 CLIP_LOG = """\
@@ -61,7 +65,24 @@ used to find recurring patterns across clips.
 - `stage_music`: whether performed or amplified music is audible, and what it is.
 - `issues`: anything that limits how the clip can be used.
 - `tags`: short keywords for search.
+{language}"""
+
+# A hint about what will be *heard*, not an instruction about what to write. Only added
+# when the brief declares a language; footage where the speakers switch languages mid-clip
+# declares none, and a wrong hint is worse than no hint.
+LANGUAGE_RULE = """
+The speech in this clip is mostly in {language_name}, though speakers may switch \
+languages mid-sentence. Transcribe what you hear in whatever language it was said, and \
+never translate it.
 """
+
+# Only the languages a name is needed for; anything else falls back to the code itself,
+# which the model reads perfectly well.
+LANGUAGE_NAMES = {
+    "es": "Spanish", "en": "English", "ca": "Catalan", "fr": "French",
+    "de": "German", "it": "Italian", "pt": "Portuguese", "gl": "Galician",
+    "eu": "Basque", "nl": "Dutch", "ja": "Japanese", "ko": "Korean", "zh": "Chinese",
+}
 
 
 def format_context(
@@ -121,5 +142,16 @@ def _merge(labelled: list[tuple[str, float, float]]) -> list[tuple[str, float, f
     return out
 
 
-def clip_log_prompt(context: str) -> str:
-    return CLIP_LOG.format(context=context)
+def clip_log_prompt(context: str, language: str | None = None) -> str:
+    """The clip-log question, optionally pinned to the footage's language.
+
+    With no language the rule is omitted entirely rather than defaulting to English: a
+    project that never declared one is likelier to be mixed than to be English, and a
+    wrong instruction is worse than none.
+    """
+    rule = ""
+    if language:
+        rule = LANGUAGE_RULE.format(
+            language_name=LANGUAGE_NAMES.get(language.lower()[:2], language)
+        )
+    return CLIP_LOG.format(context=context, language=rule)

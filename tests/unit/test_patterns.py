@@ -367,11 +367,14 @@ def test_convention_trimming_runs_before_the_rails(project, monkeypatch):
     The rule the pipeline follows: source-range edits before the rails, timeline-position
     repairs after. This pins the convention trim on the correct side of it.
     """
+    # The sequence lives in `plan.prepare`, shared by the render and the rhythm report so
+    # that what is measured is what is rendered.
+    from montaje.plan import prepare
     from montaje.render import pipeline
 
     calls: list[str] = []
-    real_conventions = pipeline.apply_conventions
-    real_rails = pipeline.apply_rails
+    real_conventions = prepare.apply_conventions
+    real_rails = prepare.apply_rails
 
     def spy_conventions(*args, **kwargs):
         calls.append("conventions")
@@ -381,9 +384,9 @@ def test_convention_trimming_runs_before_the_rails(project, monkeypatch):
         calls.append("rails")
         return real_rails(*args, **kwargs)
 
-    monkeypatch.setattr(pipeline, "apply_conventions", spy_conventions)
-    monkeypatch.setattr(pipeline, "apply_rails", spy_rails)
-    monkeypatch.setattr(pipeline, "apply_spotting", lambda plan, **kw: plan)
+    monkeypatch.setattr(prepare, "apply_conventions", spy_conventions)
+    monkeypatch.setattr(prepare, "apply_rails", spy_rails)
+    monkeypatch.setattr(prepare, "apply_spotting", lambda plan, **kw: plan)
 
     from montaje.config import load_config
     from montaje.index.store import Store

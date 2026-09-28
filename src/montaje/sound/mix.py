@@ -81,35 +81,80 @@ def _db(value: float) -> str:
     return f"{value:.3f}dB"
 
 
+# Shorter than this, a ramp is not a ramp. The threshold is the printing precision, not an
+# arithmetic epsilon: the durations are written into the filter string with four decimals, so
+# a guard of 1e-6 still rendered as "0.0000" and ffmpeg divided by zero. A real 97s edit hit
+# it on the last clip, whose release tail was clipped by the end of the timeline.
+MIN_RAMP_S = 0.001
+
+
+def duck_windows(
+    clips: list[ClipAudio], duration_s: float
+) -> list[tuple[float, float, float, float, float]]:
+    """Merged `(attack_start, hold_start, hold_end, release_end, depth)` spans.
+
+    Overlapping and adjacent speech is merged into one dip at the deepest depth involved,
+    which is both what a dialogue mixer does — the music stays down through a run of lines
+    instead of pumping up between them — and what makes the expression below expressible:
+    disjoint spans can be summed, where per-clip spans have to be combined with `max`.
+    """
+    speaking = sorted(
+        (c for c in clips if c.duck_music_db is not None), key=lambda c: c.start_s
+    )
+    merged: list[list[float]] = []
+    for c in speaking:
+        depth = 1.0 - 10 ** (c.duck_music_db / 20.0)
+        window = [
+            max(0.0, c.start_s - DUCK_ATTACK_S),   # attack starts
+            c.start_s,                              # full depth from here
+            c.end_s,                                # release starts
+            min(duration_s, c.end_s + DUCK_RELEASE_S),
+            depth,
+        ]
+        if merged and window[0] <= merged[-1][3]:
+            previous = merged[-1]
+            previous[2] = max(previous[2], window[2])
+            previous[3] = max(previous[3], window[3])
+            previous[4] = max(previous[4], window[4])
+        else:
+            merged.append(window)
+    return [tuple(w) for w in merged]  # type: ignore[misc]
+
+
 def duck_envelope_expression(clips: list[ClipAudio], duration_s: float) -> str | None:
     """A `volume` expression that dips the music under each speaking clip.
 
-    One expression for the whole timeline rather than a sidechain compressor: the
-    dip is driven by the *plan* (where speech was placed, including J/L cuts), not by
-    the signal, so it is exactly reproducible and lands ahead of the first syllable.
+    One expression for the whole timeline rather than a sidechain compressor: the dip is
+    driven by the *plan* (where speech was placed, including J/L cuts), not by the signal,
+    so it is exactly reproducible and lands ahead of the first syllable.
+
+    The terms are summed over disjoint spans rather than nested with `max`. Nesting one
+    `max(if(...))` per speaking clip built an expression whose depth grew with the edit: at
+    99 speaking clips ffmpeg gave up with "Error initializing filters", and no synthetic
+    fixture with a handful of clips could have shown it. Summed, the depth is always one.
     """
-    speaking = [c for c in clips if c.duck_music_db is not None]
-    if not speaking:
+    windows = duck_windows(clips, duration_s)
+    if not windows:
         return None
     terms: list[str] = []
-    for c in speaking:
-        gain = 10 ** (c.duck_music_db / 20.0)
-        depth = 1.0 - gain
-        a0 = max(0.0, c.start_s - DUCK_ATTACK_S)
-        a1 = c.start_s
-        r0 = c.end_s
-        r1 = min(duration_s, c.end_s + DUCK_RELEASE_S)
-        # Ramp in, hold, ramp out. Each clip contributes its own reduction; the
-        # deepest one wins via the running minimum below.
-        terms.append(
-            f"if(between(t,{a0:.4f},{a1:.4f}),{depth:.5f}*(t-{a0:.4f})/{max(1e-6, a1 - a0):.4f},"
-            f"if(between(t,{a1:.4f},{r0:.4f}),{depth:.5f},"
-            f"if(between(t,{r0:.4f},{r1:.4f}),{depth:.5f}*(1-(t-{r0:.4f})/{max(1e-6, r1 - r0):.4f}),0)))"
-        )
-    reduction = terms[0]
-    for term in terms[1:]:
-        reduction = f"max({reduction},{term})"
-    return f"volume=volume='1-({reduction})':eval=frame"
+    for attack_start, hold_start, hold_end, release_end, depth in windows:
+        # `between` is inclusive at both ends, so the segments are bounded with explicit
+        # comparisons instead — two terms firing on the same sample would double the dip.
+        if hold_start - attack_start > MIN_RAMP_S:
+            terms.append(
+                f"between(t,{attack_start:.4f},{hold_start:.4f})"
+                f"*{depth:.5f}*(t-{attack_start:.4f})/{hold_start - attack_start:.4f}"
+            )
+        if hold_end > hold_start:
+            terms.append(f"gt(t,{hold_start:.4f})*lte(t,{hold_end:.4f})*{depth:.5f}")
+        if release_end - hold_end > MIN_RAMP_S:
+            terms.append(
+                f"gt(t,{hold_end:.4f})*lte(t,{release_end:.4f})"
+                f"*{depth:.5f}*(1-(t-{hold_end:.4f})/{release_end - hold_end:.4f})"
+            )
+    if not terms:
+        return None
+    return f"volume=volume='1-({'+'.join(terms)})':eval=frame"
 
 
 def _dialogue_chain() -> str:

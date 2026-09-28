@@ -1,5 +1,11 @@
 projects/
 build.log
+
+# Credentials and footage. Never versioned: keys must not enter history at all, and
+# source footage belongs to whoever shot it, not to this repo.
+.env
+.env.*
+videos/
 tonemap_comparison/
 library/gallery/
 

@@ -16,6 +16,7 @@ from montaje.sound.mix import (
     SfxPlacement,
     build_graph,
     duck_envelope_expression,
+    duck_windows,
     mix_spec_from_plan,
     render_mix,
 )
@@ -220,13 +221,78 @@ def test_duck_lead_in_accounts_for_the_j_cut():
 
 
 def test_deeper_duck_wins_where_two_clips_overlap():
+    """Overlapping speech merges into one dip at the deeper depth, rather than two dips."""
     clips = [
         ClipAudio(shot_id="s1", wav="x.wav", src_in=0, src_out=2, timeline_s=0.0,
                   duck_music_db=-6.0),
         ClipAudio(shot_id="s2", wav="x.wav", src_in=0, src_out=2, timeline_s=1.0,
                   duck_music_db=-20.0),
     ]
-    assert "max(" in duck_envelope_expression(clips, 10.0)
+    windows = duck_windows(clips, 10.0)
+    assert len(windows) == 1
+    deep = 1.0 - 10 ** (-20.0 / 20.0)
+    assert windows[0][4] == pytest.approx(deep)
+
+
+def test_adjacent_speech_merges_into_one_dip():
+    """A run of lines should hold the music down, not pump it up between them."""
+    clips = [
+        ClipAudio(shot_id=f"s{i}", wav="x.wav", src_in=0, src_out=1,
+                  timeline_s=float(i), duck_music_db=-12.0)
+        for i in range(6)
+    ]
+    assert len(duck_windows(clips, 20.0)) == 1
+
+
+def test_speech_far_apart_stays_as_separate_dips():
+    clips = [
+        ClipAudio(shot_id="s1", wav="x.wav", src_in=0, src_out=1, timeline_s=0.0,
+                  duck_music_db=-12.0),
+        ClipAudio(shot_id="s2", wav="x.wav", src_in=0, src_out=1, timeline_s=30.0,
+                  duck_music_db=-12.0),
+    ]
+    assert len(duck_windows(clips, 60.0)) == 2
+
+
+def test_the_expression_never_nests():
+    """One `max(if(...))` per speaking clip grew the expression's depth with the edit: at 99
+    speaking clips ffmpeg failed with "Error initializing filters"."""
+    clips = [
+        ClipAudio(shot_id=f"s{i}", wav="x.wav", src_in=0, src_out=0.4,
+                  timeline_s=i * 1.0, duck_music_db=-12.0)
+        for i in range(120)
+    ]
+    expr = duck_envelope_expression(clips, 200.0)
+    assert "if(" not in expr
+    assert "max(" not in expr
+
+
+def test_a_release_clipped_by_the_end_of_the_timeline_emits_no_ramp():
+    """The defect that broke a real render: the guard against a zero-length ramp was 1e-6,
+    below the four decimals the duration is printed with, so ffmpeg divided by zero."""
+    clips = [ClipAudio(shot_id="s1", wav="x.wav", src_in=0, src_out=2, timeline_s=8.0,
+                       duck_music_db=-12.0)]
+    # The clip ends exactly at the timeline end, so there is no room for a release.
+    expr = duck_envelope_expression(clips, 10.0)
+    assert "/0.0000" not in expr
+
+
+def test_an_attack_clipped_by_the_start_of_the_timeline_emits_no_ramp():
+    clips = [ClipAudio(shot_id="s1", wav="x.wav", src_in=0, src_out=2, timeline_s=0.0,
+                       duck_music_db=-12.0)]
+    assert "/0.0000" not in duck_envelope_expression(clips, 10.0)
+
+
+def test_the_envelope_never_inverts_the_music():
+    """Summed terms must never exceed 1, or `1-(...)` would flip the music's polarity."""
+    clips = [
+        ClipAudio(shot_id=f"s{i}", wav="x.wav", src_in=0, src_out=1,
+                  timeline_s=float(i), duck_music_db=-30.0)
+        for i in range(8)
+    ]
+    for _, hold_start, hold_end, _, depth in duck_windows(clips, 20.0):
+        assert depth < 1.0
+        assert hold_end > hold_start
 
 
 # -- plan translation --------------------------------------------------------------------------

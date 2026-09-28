@@ -23,6 +23,11 @@ class SnapKind(StrEnum):
     NONE = "none"
     SHOT = "shot"
     BEAT = "beat"
+    # The eighth-note grid: every beat plus the midpoint between beats. A festival edit
+    # genuinely cuts on off-beats, and without this the finest available position is the
+    # beat — which makes any shot shorter than one beat put its following cut off the grid
+    # by construction, however well the edit is built.
+    HALF_BEAT = "half_beat"
     DOWNBEAT = "downbeat"
     BAR = "bar"
     WORD_START = "word_start"
@@ -149,8 +154,22 @@ class ShotAudio(BaseModel):
 
 
 class SnapSpec(BaseModel):
+    """Where a shot's edges are pulled to.
+
+    `in_`/`out` are **source-domain**: which frame of the original the shot starts and ends
+    on — a shot boundary, a word edge, the end of an occlusion. `timeline` is separately
+    **timeline-domain**: where in the finished edit the shot appears.
+
+    They have to be separate because a shot commonly needs both, and the two never conflict:
+    moving when a shot appears does not move which frames of it are used. Collapsing them
+    into one field meant a captioned shot, which must start on a word, could not also land
+    on the beat — and with a third of the shots in a real edit captioned, a third of the cuts
+    were simply exempt from the musical grid, which measured as 45% of cuts off it.
+    """
+
     in_: SnapKind = Field(default=SnapKind.NONE, alias="in")
     out: SnapKind = SnapKind.NONE
+    timeline: SnapKind = SnapKind.NONE
 
     model_config = {"populate_by_name": True}
 

@@ -8,7 +8,14 @@ from hypothesis import strategies as st
 
 from montaje.models.editplan import SnapKind
 from montaje.models.events import Event
-from montaje.plan.snap import SnapCandidates, nearest, snap_source_time, snap_timeline_frame
+from montaje.plan.snap import (
+    MAX_MEASURE_FRACTION,
+    SnapCandidates,
+    grid_window_ms,
+    nearest,
+    snap_source_time,
+    snap_timeline_frame,
+)
 
 CANDS = SnapCandidates(
     shots=[0.0, 4.0, 9.5],
@@ -102,10 +109,45 @@ def test_snap_outside_window_is_left_alone():
     assert snap_timeline_frame(22, SnapKind.BEAT, 30.0, BEATS, DOWNBEATS, window_ms=120.0) == 22
 
 
-def test_snap_window_is_configurable():
-    # frame 22 = 0.733s: 233ms from beat 0.5s, 267ms from beat 1.0s. A 300ms window
-    # admits both, so it snaps to the closer one (0.5s = frame 15).
-    assert snap_timeline_frame(22, SnapKind.BEAT, 30.0, BEATS, DOWNBEATS, window_ms=300.0) == 15
+def test_snap_window_is_configurable_within_the_grid_cap():
+    """A coarser grid leaves room for a wider window: downbeats 2s apart cap it at 1s."""
+    # frame 12 = 0.4s, 400ms from the downbeat at 0.0.
+    assert snap_timeline_frame(12, SnapKind.DOWNBEAT, 30.0, BEATS, DOWNBEATS, window_ms=120.0) == 12
+    assert snap_timeline_frame(12, SnapKind.DOWNBEAT, 30.0, BEATS, DOWNBEATS, window_ms=450.0) == 0
+
+
+def test_the_snap_window_cannot_exceed_half_the_grid_spacing():
+    """Half the spacing is the furthest a snap can be unambiguous: past it, the cut is
+    nearer the *next* position than the one being aimed at."""
+    assert grid_window_ms(BEATS, 300.0) == pytest.approx(250.0)  # 500ms spacing
+    assert grid_window_ms([0.0, 0.25, 0.5, 0.75], 300.0) == pytest.approx(125.0)
+
+
+def test_the_default_beat_window_is_unaffected_by_the_cap():
+    """120ms is well inside half of a 500ms beat spacing, so nothing existing changes."""
+    assert grid_window_ms(BEATS, 120.0) == pytest.approx(120.0)
+
+
+def test_measuring_is_stricter_than_snapping():
+    """The rail may move a cut half a grid step to place it; only a cut that lands close
+    counts as placed. Sharing one threshold made 'on the grid' mean nothing on a fine grid."""
+    half = [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert grid_window_ms(half, 120.0, MAX_MEASURE_FRACTION) == pytest.approx(62.5)
+    assert grid_window_ms(half, 120.0) == pytest.approx(120.0)
+
+
+def test_half_beat_snapping_reaches_off_beat_positions():
+    half = [0.0, 0.25, 0.5, 0.75, 1.0]
+    # frame 8 = 0.267s, 17ms from the off-beat at 0.25s, which the beat grid cannot reach.
+    # 0.25s at 30fps is frame 7.5, which rounds to 8.
+    assert snap_timeline_frame(8, SnapKind.HALF_BEAT, 30.0, BEATS, DOWNBEATS,
+                               half_beats=half) == 8
+    assert snap_timeline_frame(8, SnapKind.BEAT, 30.0, BEATS, DOWNBEATS) == 8
+
+
+def test_half_beat_without_a_half_grid_falls_back_to_beats():
+    """A caller that has not been updated must snap coarsely, never silently not at all."""
+    assert snap_timeline_frame(16, SnapKind.HALF_BEAT, 30.0, BEATS, DOWNBEATS) == 15
 
 
 def test_bar_falls_back_to_downbeats():

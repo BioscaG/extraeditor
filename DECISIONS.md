@@ -702,3 +702,202 @@ below any threshold that busy footage also clears. Bimodality describes what tex
 is — light glyphs directly against a dark scrim, with few mid-tones — and separates it
 cleanly from footage, which is continuous. The check stays a warning in every case: footage
 legitimately fills the frame, so this can only ever flag something for a human to look at.
+
+---
+
+## 2026-09-28 — First run on real footage: what 130 iPhone clips changed
+
+Everything below was found by running the pipeline over a real shoot — 88 videos and 42
+photos from an iCloud Shared Album, 37.4 minutes — rather than over synthetic fixtures. The
+fixtures were not wrong; they were uniform, and every defect here needed variety or scale to
+appear at all.
+
+**Measured properties of the material.** All 88 videos sit between 2.9 and 3.2 Mbps
+regardless of content, which is a fixed-ceiling transcode rather than a camera: the Shared
+Album re-encodes to 720p. 63 of 88 clips are landscape and carry 29.8 of the 37.4 minutes,
+so the output format is 16:9 — cropping that to 9:16 would have thrown away three quarters
+of the shoot or upscaled it 2.7×. The 42 photos arrived at 2730px on the long edge, 2.5× the
+output height, making them the sharpest material in the set. The ingest report's own §7.2
+degradation check flagged all 88 videos without being asked.
+
+---
+
+## 2026-09-28 — Shot lengths are whole half-beats, and the grid includes off-beats
+
+**Decision:** `SnapKind.HALF_BEAT` and `BeatGrid.half_beats` add the eighth-note grid.
+`avg_shot_beats` values are whole beats and doubled from their previous values. Shot lengths
+are quantized to whole half-beats by `_variation_half_beats`, whose mean is corrected back to
+the target exactly. `on_grid_ratio` becomes 1.0.
+
+**Alternatives:** keeping the beat as the finest grid position; deliberately displacing a
+quarter of cuts off the grid, as the style previously asked for.
+
+**Evidence:** the style asked for two things that cannot both hold. `avg_shot_beats.drop` was
+0.5, so shots lasted half a beat, while `on_grid_ratio` was 0.75 — but the finest grid
+position was the beat, so a half-beat shot puts the cut after it between positions *by
+construction*. The first real plan measured **51% of cuts on the grid against a target of
+75%**, and no amount of snapping could have fixed it.
+
+Nothing in the builder ever consumed `on_grid_ratio`, so the 25% of cuts nominally off the
+grid on purpose were all accidents. And there is no room for the gesture: at 120 BPM the
+half-beat positions are 250ms apart and the snap window is 120ms, so a cut displaced far
+enough to be deliberate is indistinguishable from a careless one. What makes an edit feel
+made by a person is that its shots are not all the same length, so the rhythm report now
+measures **shot-length spread** (std/mean) and warns below 0.2, replacing a warning that
+fired when *every* cut was on the grid.
+
+The doubling is separate and about legibility: 0.5 beats at 120 BPM is 0.25s, seven frames,
+less time than it takes to recognise what is in the frame. The first real edit ran 166 shots
+in 90 seconds — 0.54s average — which is a strobe, not a cut rate.
+
+---
+
+## 2026-09-28 — A snap window must scale with the grid it snaps to, and measuring is stricter than snapping
+
+**Decision:** `grid_window_ms(positions, window_ms, fraction)` caps a window at a fraction of
+the grid's own median spacing. Rails use 0.5; the rhythm report measures with 0.25.
+
+**Evidence:** a fixed window silently stops discriminating as the grid gets finer. At 120 BPM
+the half-beat positions are 250ms apart, and at 30fps **every frame is within 117ms of one**
+— so with the 120ms window tuned for the beat grid, every cut counted as on-grid whatever the
+edit did. The measure read 100%, which a test caught as vacuous.
+
+Separating the two fractions matters as much. Sharing one threshold at 0.25 left the rail
+unable to move a cut that had drifted 80–120ms, so it did not try: the honest measurement was
+55%. Half the spacing is the natural limit for a *rail* — up to there the nearest position is
+unambiguous — while a *measure* should stay tight. With the two separated, 87% of cuts land
+within the measuring window and 95 of 108 within 20ms.
+
+---
+
+## 2026-09-28 — Source snapping and timeline snapping are separate fields
+
+**Decision:** `SnapSpec` gains `timeline`, distinct from `in_`/`out`. Rails read
+`snap.timeline`, falling back to a timeline kind left in `snap.in_` so older plans still work.
+
+**Evidence:** a captioned shot must start on a word, and the single `in_` field could hold
+either a source kind or a timeline kind but not both — so every captioned shot was exempt
+from the musical grid. In a real edit that was 33 of 108 shots and 45% of the off-grid cuts.
+The two never conflict: moving *when* a shot appears does not change *which* frames of it are
+used. The same bug applied to section openers, whose downbeat snap silently discarded
+whatever source snapping they had.
+
+---
+
+## 2026-09-28 — The rails can move a cut backwards
+
+**Decision:** `_resize` replaces `_extend` at the call site and accepts negative frame
+counts, shortening the preceding shot.
+
+**Evidence:** the rails only ever moved a cut *later*, because moving it earlier requires the
+preceding shot to give up frames and nothing could do that. Of 108 shots in a real edit only
+**10 cuts were snapped at all**. Extending needs handle material and often has none;
+shortening only needs the shot to stay above the minimum, so it nearly always succeeds. With
+both directions available, 45 cuts snap.
+
+---
+
+## 2026-09-28 — The rhythm report measures the plan that renders, not the plan on disk
+
+**Decision:** the rails sequence moves to `plan/prepare.py`, and both `montaje render` and
+`montaje debug rhythm` call it.
+
+**Evidence:** the report read the plan file straight off disk, which is the *pre-rails*
+request. It reported 58% of cuts off the musical grid for an edit whose cuts the rails were
+about to place on it — a description of something that never rendered. Extracting the
+sequence also removes the risk that the two drift, which is the same bug in slower motion.
+
+---
+
+## 2026-09-28 — Quotes come from the transcript, never from the model
+
+**Decision:** `reconcile_quotes` replaces each quote's text with the ASR words transcribed
+under it and tightens the span onto them. A quote with no transcribed speech under it is
+marked unusable, unless the clip has no transcript at all.
+
+**Alternatives:** instructing the model not to translate, which was tried first and ignored.
+
+**Evidence:** asked in English about Spanish footage, the model returned fluent English —
+"Here we are, I don't see anything" — and an explicit verbatim instruction did not stop it.
+Worse, it filled gaps: for a clip whose transcript reads "¿Puedes escuchar? oh my god" it
+produced "Oh my god, this is coming hard guys", inventing a line nobody said. Captions play
+over the speaker's own voice, so an invented or translated one is always wrong.
+
+This is §2.2 applied to words: the model picks which moment is worth quoting, the transcript
+says what was said. It also settles the mixed-language case, which is the real one here — the
+speakers switch language mid-clip, so no single language could be asked for. The brief's
+`language` is now a *hint about what will be heard*, omitted entirely when unset, and part of
+the clip-log cache key because it changes the answer.
+
+---
+
+## 2026-09-28 — Transient API failures retry; facts about the request do not
+
+**Decision:** `_call_with_retry` retries 408/429/500/502/503/504 and transport faults up to 7
+times with exponential backoff and jitter. Everything else raises immediately.
+
+**Evidence:** the very first real clip-log call returned `503 UNAVAILABLE — "This model is
+currently experiencing high demand"`. Without retries, a run over 130 clips comes back with a
+random handful missing and nothing in the output says which clips were never understood; the
+planner silently ranks those on sharpness and motion alone. The distinction is worth drawing
+precisely: a `402 RESOURCE_EXHAUSTED` for depleted credit failed instantly, as it should,
+because retrying it would have hidden the real cause behind a minute of backoff.
+
+A model fallback was considered and rejected on measurement: when 3.8-flash was returning
+503, so were 3.7, 3.6 and 3.5 simultaneously. There was no faster model to fall back to, only
+a later moment to ask again.
+
+---
+
+## 2026-09-28 — Ducking is a sum over merged spans, not nested maxima
+
+**Decision:** `duck_windows` merges overlapping and adjacent speech into disjoint spans at
+the deepest depth involved, and `duck_envelope_expression` sums one flat term per segment.
+
+**Evidence:** the previous expression nested one `max(if(...))` per speaking clip, so its
+depth grew with the edit. At **99 speaking clips ffmpeg failed with "Error initializing
+filters"** and the render died in the mix. Summed over disjoint spans the depth is always
+one: the same edit produces 6 merged windows and an 864-character expression.
+
+Merging is also better mixing — the music stays down through a run of lines instead of
+pumping up between them.
+
+A second defect in the same expression: the guard against a zero-length ramp was `1e-6`,
+below the four decimals the duration is *printed* with, so a release tail clipped by the end
+of the timeline rendered as `/0.0000`. Guards have to be expressed at the precision of the
+output, not of the arithmetic.
+
+---
+
+## 2026-09-28 — A clip's score decays with each use of its asset
+
+**Decision:** `_pick` multiplies a candidate's score by `REPEAT_DECAY ** uses_of_that_asset`,
+with `REPEAT_DECAY = 0.54`.
+
+**Evidence:** scoring each range on its own merit means the highest-scoring clips win every
+comparison. Over 130 clips the first real edit drew all 108 of its shots from **20 assets,
+one of them fifteen times**, while 52 clips with usable footage never appeared. A viewer
+reads that as the same scene coming round again. With the decay the same edit uses 72 assets
+and reuses none more than twice.
+
+The decay is multiplicative rather than a cap because sometimes one clip really is the best
+thing in the shoot — but what buys a repeat is a *logged moment*, weighted 1.2, not technical
+merit. A fresh ordinary clip beating a second look at a sharp clip of nothing is the correct
+ranking.
+
+---
+
+## 2026-09-28 — "No usable spans" is not the same as "no analysis"
+
+**Decision:** `collect_candidates` skips an asset that has quality *metrics* but no *usable*
+spans, and only falls back to offering the whole clip when there are no metrics at all.
+
+**Evidence:** the fallback conflated two opposite situations. Of 130 real clips, **58 had no
+usable span** — night footage measuring detail 1.4 against a threshold of 4.0, with 70% of
+pixels near black — and all of them were being offered whole, in direct contradiction of the
+measurement that had just rejected them.
+
+This surfaced only after the repeat decay above broadened coverage: while the planner was
+living on 20 good clips the bug was latent, and the moment it spread out it reached the dark
+ones. One put **half a second of black into a finished render at 54.73s**, which nothing in
+plan validation could see and the output auto-checks caught on the muxed file.

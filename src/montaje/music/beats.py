@@ -46,6 +46,30 @@ class BeatGrid(BaseModel):
     def beat_period_s(self) -> float:
         return 60.0 / self.bpm
 
+    @property
+    def half_beats(self) -> list[float]:
+        """The eighth-note grid: every beat plus the midpoint between consecutive beats.
+
+        Midpoints are interpolated from the *measured* neighbouring beats rather than from
+        the nominal period, so the off-beats inherit the fitted grid's accuracy instead of
+        drifting away from it over a long track.
+        """
+        if len(self.beats) < 2:
+            return list(self.beats)
+        grid: list[float] = []
+        for current, following in zip(self.beats, self.beats[1:], strict=False):
+            grid.append(current)
+            grid.append((current + following) / 2.0)
+        grid.append(self.beats[-1])
+        # The last beat has no successor to interpolate against; extend by the final
+        # measured interval so a cut just past it still has a position to land on.
+        grid.append(self.beats[-1] + (self.beats[-1] - self.beats[-2]) / 2.0)
+        return grid
+
+    @property
+    def half_beat_period_s(self) -> float:
+        return 30.0 / self.bpm
+
     def nearest_beat(self, t: float) -> float:
         if not self.beats:
             return t

@@ -20,6 +20,7 @@ from montaje.models.editplan import EditPlan
 from montaje.models.events import Event
 from montaje.models.style import Style
 from montaje.music.structure import MusicStructure
+from montaje.plan.snap import MAX_MEASURE_FRACTION, grid_window_ms
 
 
 @dataclass
@@ -53,6 +54,9 @@ class RhythmReport:
     target_on_grid_ratio: float | None
     beat_offsets_ms: list[float] = field(default_factory=list)
     sections: list[SectionRhythm] = field(default_factory=list)
+    # Spread of shot durations, as std/mean. What makes an edit feel made by a person is
+    # that its shots are not all the same length — not that its cuts miss the grid.
+    length_variety: float | None = None
     energy_correlation: float | None = None
     us_share: float | None = None
     face_screen_time: dict[str, float] = field(default_factory=dict)
@@ -82,6 +86,8 @@ class RhythmReport:
             f"- **Transitions:** {self.transitions_per_10s:.1f} per 10s · "
             f"**SFX:** {self.sfx_per_10s:.1f} per 10s",
         ]
+        if self.length_variety is not None:
+            lines.append(f"- **Shot-length spread:** {self.length_variety:.2f}")
         if self.energy_correlation is not None:
             lines.append(f"- **Visual/music energy correlation:** {self.energy_correlation:+.2f}")
         if self.us_share is not None:
@@ -138,17 +144,27 @@ def build_rhythm_report(
     beat_period = grid.beat_period_s if grid else 0.5
 
     # Cut-to-beat offsets: measured at every cut point, including the last shot's out.
+    #
+    # Measured against the *half-beat* grid, because that is the grid the edit is built on.
+    # A cut on an off-beat is as musical as one on a beat — every fast edit cuts on off-beats
+    # — so scoring it as a miss described a defect that was not there, while a genuinely
+    # sloppy cut 200ms from anything scored the same.
     offsets_ms: list[float] = []
-    if grid and grid.beats:
+    positions = grid.half_beats if grid else []
+    if positions:
         cut_times = [s.timeline_in / fps for s in shots]
         if shots:
             last = shots[-1]
             cut_times.append((last.timeline_in + last.timeline_duration_frames(fps)) / fps)
         for t in cut_times:
-            nearest = min(grid.beats, key=lambda b: abs(b - t))
+            nearest = min(positions, key=lambda b: abs(b - t))
             offsets_ms.append((t - nearest) * 1000.0)
 
-    window_ms = 120.0
+    # Scaled to the grid's spacing, for the same reason the rail's window is: a fixed 120ms
+    # against 250ms half-beat positions calls every frame on-grid and measures nothing. The
+    # measuring fraction is tighter than the rail's — the rail may move a cut half a grid
+    # step to place it, but only a cut that lands close counts as placed.
+    window_ms = grid_window_ms(positions, 120.0, MAX_MEASURE_FRACTION)
     on_grid = sum(1 for o in offsets_ms if abs(o) <= window_ms)
     on_grid_ratio = on_grid / len(offsets_ms) if offsets_ms else 0.0
 
@@ -162,6 +178,7 @@ def build_rhythm_report(
         beat_offsets_ms=[round(o, 1) for o in offsets_ms],
         transitions_per_10s=round(n_transitions / per_10s, 3),
         sfx_per_10s=round(len(plan.sfx) / per_10s, 3),
+        length_variety=_length_variety(shots, fps),
     )
 
     # Per-section pacing against the style's targets.
@@ -224,20 +241,47 @@ def build_rhythm_report(
     return report
 
 
+# Below this, shot lengths are close enough to identical that the cut rate reads as a
+# metronome. Measured as std/mean: the style's own variation pattern produces about 0.45,
+# and a section of constant-length shots produces 0.0.
+MIN_LENGTH_VARIETY = 0.2
+
+# Density caps are taste guidance, not arithmetic. Spotting that correctly aims at the cap
+# lands a hair over it — 27 cues across 89.9s is 3.003 per 10s against a limit of 3.0 — and
+# reporting that as a problem produced the message "3.0 SFX per 10s exceeds the style limit
+# of 3.0", which is both true and useless.
+DENSITY_TOLERANCE = 1.05
+
+
+def _length_variety(shots: list, fps: float) -> float | None:
+    """Spread of shot durations, as std/mean. `None` when there is nothing to compare."""
+    if len(shots) < 3:
+        return None
+    lengths = [s.timeline_duration_frames(fps) / fps for s in shots]
+    mean = sum(lengths) / len(lengths)
+    if mean <= 0:
+        return None
+    variance = sum((x - mean) ** 2 for x in lengths) / len(lengths)
+    return round(variance**0.5 / mean, 3)
+
+
 def _rhythm_problems(report: RhythmReport, style: Style | None) -> list[str]:
     problems: list[str] = []
-    if report.target_on_grid_ratio is not None:
-        # Both directions are wrong: too loose reads as sloppy, 100% reads as robotic.
-        if report.on_grid_ratio < report.target_on_grid_ratio - 0.15:
-            problems.append(
-                f"only {report.on_grid_ratio * 100:.0f}% of cuts are on the beat grid "
-                f"(target {report.target_on_grid_ratio * 100:.0f}%) — the edit will feel loose"
-            )
-        elif report.on_grid_ratio > 0.97 and report.target_on_grid_ratio < 0.97:
-            problems.append(
-                "every cut is on the grid — break it deliberately somewhere or the edit "
-                "will feel mechanical (§16.4)"
-            )
+    if report.target_on_grid_ratio is not None and (
+        report.on_grid_ratio < report.target_on_grid_ratio - 0.15
+    ):
+        problems.append(
+            f"only {report.on_grid_ratio * 100:.0f}% of cuts are on the beat grid "
+            f"(target {report.target_on_grid_ratio * 100:.0f}%) — the edit will feel loose"
+        )
+    # What used to live here was a complaint about *every* cut being on the grid. It was
+    # the wrong measure: cutting on the grid is what makes an edit feel cut to the music,
+    # and §16.4's real requirement is that the shots not all be the same length.
+    if report.length_variety is not None and report.length_variety < MIN_LENGTH_VARIETY:
+        problems.append(
+            f"shot lengths barely vary (spread {report.length_variety:.2f}) — a constant "
+            f"cut rate is what makes an edit feel generated rather than edited (§16.4)"
+        )
     for s in report.sections:
         if s.on_target is False:
             direction = "faster" if s.avg_shot_beats > (s.target_shot_beats or 0) else "slower"
@@ -251,12 +295,12 @@ def _rhythm_problems(report: RhythmReport, style: Style | None) -> list[str]:
             f"the busiest footage should land in the loudest sections"
         )
     if style is not None:
-        if report.transitions_per_10s > style.transitions.max_per_10s:
+        if report.transitions_per_10s > style.transitions.max_per_10s * DENSITY_TOLERANCE:
             problems.append(
                 f"{report.transitions_per_10s:.1f} transitions per 10s exceeds the style limit of "
                 f"{style.transitions.max_per_10s} — transition overuse is the most common amateur tell"
             )
-        if report.sfx_per_10s > style.sfx.density_max_per_10s:
+        if report.sfx_per_10s > style.sfx.density_max_per_10s * DENSITY_TOLERANCE:
             problems.append(
                 f"{report.sfx_per_10s:.1f} SFX per 10s exceeds the style limit of "
                 f"{style.sfx.density_max_per_10s}"

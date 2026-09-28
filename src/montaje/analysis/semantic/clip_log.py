@@ -26,24 +26,42 @@ from montaje.workspace import Workspace, atomic_write_text
 log = logging.getLogger(__name__)
 
 
-def cache_path(ws: Workspace, asset_id: str, model: str, prompt_version: int) -> Path:
+def cache_path(
+    ws: Workspace,
+    asset_id: str,
+    model: str,
+    prompt_version: int,
+    language: str | None = None,
+) -> Path:
+    """Where one clip log lives. The language is in the name because it is in the answer:
+    switching the brief's language must not read back logs quoting the old one."""
     safe_model = model.replace("/", "_")
+    suffix = f".{language}" if language else ""
     return (
-        ws.asset_cache(asset_id) / "analysis" / f"cliplog_{safe_model}@{prompt_version}.json"
+        ws.asset_cache(asset_id) / "analysis"
+        / f"cliplog_{safe_model}@{prompt_version}{suffix}.json"
     )
 
 
-def semantic_config(cfg: Config) -> SemanticConfig:
+def semantic_config(cfg: Config, language: str | None = None) -> SemanticConfig:
     return SemanticConfig(
         model=cfg.semantic.model,
         fps_short_clips=cfg.semantic.fps_short_clips,
         media_resolution=cfg.semantic.media_resolution,
+        language=language,
     )
+
+
+def _brief_language(ws: Workspace) -> str | None:
+    try:
+        return ws.load_brief().language
+    except Exception:
+        return None
 
 
 def run_semantic(ws: Workspace, cfg: Config, force: bool = False) -> list[str]:
     """Analyze every asset that has no cached clip log. Returns report lines."""
-    scfg = semantic_config(cfg)
+    scfg = semantic_config(cfg, _brief_language(ws))
     if not available(scfg):
         return [
             "[yellow]Semantic analysis skipped: set GEMINI_API_KEY (and install "
@@ -58,7 +76,9 @@ def run_semantic(ws: Workspace, cfg: Config, force: bool = False) -> list[str]:
     with Store(ws.db_path) as store:
         assets = store.list_assets()
         for asset in assets:
-            path = cache_path(ws, asset.asset_id, scfg.model, prompts.PROMPT_VERSION)
+            path = cache_path(
+                ws, asset.asset_id, scfg.model, prompts.PROMPT_VERSION, scfg.language
+            )
             if path.exists() and not force:
                 store.upsert_clip_log(ClipLog.model_validate_json(path.read_text()))
                 cached += 1
