@@ -71,6 +71,65 @@ def make_click_track(out: Path, bpm: float = 120.0, duration: float = 10.0, sr: 
     return {"bpm": bpm, "beats": beats, "downbeats": beats[::accent_every], "duration_s": duration}
 
 
+def make_structured_track(out: Path, bpm: float = 120.0, sr: int = 48000,
+                          section_bars: tuple[int, ...] = (8, 16, 16, 8),
+                          beats_per_bar: int = 4) -> dict:
+    """A track with known tempo, bar grid and contrasting sections.
+
+    Four sections of known bar lengths, each with a different timbre and level, so
+    structure detection has a real boundary to find and the fit-to-duration tests
+    have exact phrase boundaries to check against. At 120 BPM a bar is exactly 2 s,
+    so section boundaries land on whole seconds.
+    """
+    import numpy as np
+
+    period = 60.0 / bpm
+    bar_s = period * beats_per_bar
+    rng = np.random.default_rng(11)
+    parts: list[np.ndarray] = []
+    boundaries: list[float] = [0.0]
+    # (level, bass amount, hat amount) per section: quiet intro, build, loud drop, outro.
+    voicing = [(0.25, 0.3, 0.0), (0.5, 0.6, 0.5), (0.95, 1.0, 1.0), (0.3, 0.2, 0.2)]
+
+    for bars, (level, bass, hat) in zip(section_bars, voicing, strict=True):
+        n = int(round(bars * bar_s * sr))
+        seg = np.zeros(n, dtype=np.float32)
+        t = np.arange(n) / sr
+        # Sustained tonal bed so the timbre differs per section.
+        seg += (0.15 * level * bass * np.sin(2 * np.pi * 110 * t)).astype(np.float32)
+        seg += (0.10 * level * np.sin(2 * np.pi * 330 * t)).astype(np.float32)
+        seg += (0.05 * level * hat * rng.standard_normal(n)).astype(np.float32)
+        # Kick on every beat, accented on the downbeat, so the beat grid is findable.
+        n_beats = int(bars * beats_per_bar)
+        for i in range(n_beats):
+            start = int(round(i * period * sr))
+            k = int(0.08 * sr)
+            if start + k > n:
+                break
+            env = np.exp(-np.linspace(0, 10, k)).astype(np.float32)
+            amp = level * (1.0 if i % beats_per_bar == 0 else 0.55)
+            kick = amp * env * np.sin(2 * np.pi * 60 * np.arange(k) / sr).astype(np.float32)
+            seg[start : start + k] += kick
+        parts.append(seg)
+        boundaries.append(boundaries[-1] + n / sr)
+
+    x = np.concatenate(parts)
+    pcm = (np.clip(x, -1, 1) * 32767).astype("<i2")
+    _run(["-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0", "-c:a", "pcm_s16le", str(out)],
+         stdin=pcm.tobytes())
+    total = len(x) / sr
+    return {
+        "bpm": bpm,
+        "beats_per_bar": beats_per_bar,
+        "bar_s": bar_s,
+        "section_bars": list(section_bars),
+        "section_boundaries": [round(b, 4) for b in boundaries],
+        "duration_s": round(total, 4),
+        "beats": [round(i * period, 6) for i in range(int(total / period))],
+        "downbeats": [round(i * bar_s, 6) for i in range(int(total / bar_s))],
+    }
+
+
 def make_speech_over_music(out: Path, speech_at_s: float = 2.0, duration: float = 8.0,
                            text: str = "This is a test of the montaje speech detector") -> dict:
     """A video whose audio is macOS `say` speech at a known offset over a quiet tone bed.
@@ -178,6 +237,7 @@ def make_all(out_dir: Path) -> dict:
     truth["occlusion.mp4"] = make_occlusion_clip(out_dir / "occlusion.mp4")
     truth["click_120.wav"] = make_click_track(out_dir / "click_120.wav", bpm=120)
     truth["click_90.wav"] = make_click_track(out_dir / "click_90.wav", bpm=90)
+    truth["track.wav"] = make_structured_track(out_dir / "track.wav")
     truth["speech.mp4"] = make_speech_over_music(out_dir / "speech.mp4")
     truth["hlg.mp4"] = make_hlg_clip(out_dir / "hlg.mp4")
     truth["vfr.mp4"] = make_vfr_clip(out_dir / "vfr.mp4")

@@ -116,3 +116,75 @@ requirement that VAD stays quiet on music-only clips.
 copies, which `color_stats` cannot be expected to separate — the fixture, not the analyzer, was
 wrong. `colortemperature` applies a white-point shift across the whole tonal range and produces a
 realistic, clearly measurable difference.
+
+---
+
+## 2026-09-28 — Beat grid is least-squares fitted, not just phase-aligned
+
+**Decision:** `track_beats` estimates a coarse tempo and phase from the onset envelope, then
+`refine_grid` fits **both** phase and period by linear regression against measured attack times,
+with outlier rejection and a guard against collapsing onto another metrical level. The grid stays
+rigid (one phase, one period) — beats are never individually snapped.
+
+**Alternatives:** phase-only alignment with a global offset correction; per-beat snapping to the
+nearest onset.
+
+**Evidence:** measured on the fixtures, in three stages:
+
+| stage | click 120 | click 90 | 96 s arrangement |
+|---|---|---|---|
+| phase search only | 13.8 ms | 15.2 ms | — |
+| + global offset correction | 0.30 ms | 2.4 ms | 29.7 ms |
+| + period fitted (current) | 1.0 ms | 1.4 ms | **3.1 ms** over 192 beats |
+
+A global offset cannot fix a tempo error: 120.094 BPM against a true 120 drifts 75 ms over 96
+seconds, and the median correction just splits that error either side of the middle. Per-beat
+snapping would fix the error but introduce jitter, and a jittery grid makes cuts feel loose rather
+than tight — the opposite of the goal.
+
+---
+
+## 2026-09-28 — Three different envelopes, one per measurement, because each has a different bias
+
+**Decision:** the music module computes three envelopes and uses each only where its bias does not
+matter: **spectral flux** (5 ms) for tempo and coarse phase, **amplitude** (1 ms) for beat strength
+and energy, **amplitude rise** (1 ms) for locating attacks.
+
+**Evidence:** each has a measurable, opposite timing bias. Spectral flux peaks ~14 ms *before* the
+transient (its analysis window's group delay: the flux rises as a transient enters the window).
+Raw amplitude peaks *after* it, by about a quarter cycle of the carrier — ~4 ms for a 60 Hz kick.
+Only the rise of the amplitude envelope is unbiased, which is what makes millisecond grid fitting
+possible. This is not academic: using the flux for downbeat detection put the downbeats one beat
+off, because sampling it at a now-accurate beat time lands past its peak and reports every beat as
+equally weak.
+
+---
+
+## 2026-09-28 — Section boundaries: median + MAD novelty threshold
+
+**Decision:** `analyze_structure` accepts a phrase boundary as a section change only when its
+checkerboard novelty exceeds `median + 4 × 1.4826 × MAD` of all candidates.
+
+**Alternatives:** take the top-N candidates greedily; threshold at mean + k·sigma.
+
+**Evidence:** on the 4-section fixture, taking candidates greedily in rank order produced 6
+sections, splitting homogeneous material at arbitrary phrase boundaries. Thresholding at mean+sigma
+failed the other way and produced 2: novelty spans orders of magnitude (the true boundaries scored
+0.2134, 0.0279 and 0.0042 against ≤0.0009 for every non-boundary), so the single strongest
+boundary inflates the standard deviation enough to hide the weaker real ones. MAD ignores exactly
+those outliers and recovers all three boundaries to within 0.1 s, with the correct bar counts.
+
+---
+
+## 2026-09-28 — Fit-to-duration operates on whole phrases, longest grid first
+
+**Decision:** `fit_to_duration` tries 16-, then 8-, then 4-bar phrase grids and returns the first
+that lands within tolerance. Shortening removes whole phrases ranked by how safe they are to drop
+(low energy, mid-track, never the drop or the edge phrases); lengthening repeats the
+highest-energy non-edge phrases. Joins are downbeat crossfades, validated by `validate_joins`.
+
+**Evidence:** §14.2 requires whole-phrase edits on downbeats. Longest-grid-first because removing
+one 16-bar phrase is less audible than removing four 4-bar ones. `phrase_spans` merges fragments
+shorter than half a phrase into their neighbour: the first downbeat is almost never at exactly 0.0,
+and naively prepending it produced a 7 ms "phrase" that rounded to zero timeline frames and
+silently corrupted the edit's frame positions.
