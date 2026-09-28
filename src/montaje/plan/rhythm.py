@@ -89,7 +89,13 @@ class RhythmReport:
         if self.length_variety is not None:
             lines.append(f"- **Shot-length spread:** {self.length_variety:.2f}")
         if self.energy_correlation is not None:
-            lines.append(f"- **Visual/music energy correlation:** {self.energy_correlation:+.2f}")
+            # The section count is printed with it on purpose. The correlation is computed
+            # across sections, and a track with four of them gives four points — on which
+            # r = +0.99 is easy and means much less than it looks.
+            lines.append(
+                f"- **Visual/music energy correlation:** {self.energy_correlation:+.2f} "
+                f"(across {len(self.sections)} sections)"
+            )
         if self.us_share is not None:
             lines.append(f"- **Shots with us in frame:** {self.us_share * 100:.0f}%")
         lines.append("")
