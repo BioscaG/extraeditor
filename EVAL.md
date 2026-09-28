@@ -57,9 +57,11 @@ than discovered:
   on sharpness, steadiness and motion only. It cannot tell a hero moment from a shot of
   the floor, so *selection* — the thing that most separates a good edit from a bad one —
   is effectively random within the usable material. Expect story and hook to score low.
-- **No reframing.** Shots are letterboxed to fit rather than reframed onto the subject,
-  because subject tracking (§9 `subjects`) is not implemented. On 9:16 output from 16:9
-  footage this is very visible.
+- **Reframing is implemented but unvalidated on faces.** Shots are cropped onto the
+  subject rather than letterboxed. The detector combines detail, skin tone and
+  subject-relative motion, and locates a synthetic subject to within 0.02 of its true
+  position — but it has never been run against a real face, so its behaviour on actual
+  footage is the first thing to check when scoring.
 - **Shot selection ignores duplicates.** `dedupe` is not implemented, so the only
   protection against near-identical adjacent shots is avoiding the same source clip twice
   in a row.

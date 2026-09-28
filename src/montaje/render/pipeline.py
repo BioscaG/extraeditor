@@ -153,6 +153,7 @@ def render(
         plan, assets, ws.intermediates_dir,
         corrections=corrections, grade=grade, hdr_method=cfg.hdr.method,
         shot_color_index=_shot_color_index(plan, events),
+        subject_centers=_subject_centers(plan, events),
     )
     result.intermediates_cached = conformed.cached_count
 
@@ -289,4 +290,19 @@ def _word_spans(events: dict[str, list]) -> dict[str, list[tuple[float, float]]]
         ]
         if spans:
             out[asset_id] = spans
+    return out
+
+
+def _subject_centers(
+    plan: EditPlan, events: dict[str, list]
+) -> dict[str, tuple[float, float] | None]:
+    """Where to put the reframe crop for each shot, or None to centre it."""
+    from montaje.analysis.local.subjects import center_for_range
+
+    out: dict[str, tuple[float, float] | None] = {}
+    for shot in plan.shots:
+        subject_events = [
+            e for e in events.get(shot.asset, []) if e.analyzer.startswith("subjects")
+        ]
+        out[shot.id] = center_for_range(subject_events, shot.src_in, shot.src_out)
     return out

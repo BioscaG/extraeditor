@@ -21,6 +21,7 @@ from montaje.ingest.hashing import params_hash
 from montaje.ingest.hdr import needs_tonemap, requires_hw_frames, resolve_method, sdr_filter
 from montaje.models.asset import Asset, AssetKind
 from montaje.models.editplan import EditPlan, Shot
+from montaje.render.reframe import Crop, crop_for_shot
 
 # Extra material either side of the cut, so transitions and speed ramps have
 # something to work with and a late snap does not run off the end of the clip.
@@ -42,6 +43,7 @@ class ConformSpec:
     hdr_method: str = "zscale_hable"
     correction: ShotCorrection | None = None
     grade: Grade | None = None
+    crop: Crop | None = None
     handle_s: float = HANDLE_S
     slomo_native_fps: bool = True
 
@@ -69,6 +71,7 @@ class ConformSpec:
             "hdr": resolve_method(self.hdr_method),
             "correction": self.correction.to_filter() if self.correction else None,
             "grade": self.grade.to_filter() if self.grade else None,
+            "crop": self.crop.to_filter() if self.crop else None,
             "slomo_native_fps": self.slomo_native_fps,
         })
 
@@ -106,8 +109,12 @@ def build_filters(spec: ConformSpec) -> tuple[list[str], list[str]]:
         tm = sdr_filter(spec.asset.probe.video, method)
         if tm:
             filters.append(tm)
-        # Fit inside the frame preserving aspect, then pad: cropping is the
-        # reframe module's job, not the conform's.
+        # Reframe before scaling: the crop is expressed in source pixels, and cropping
+        # after a scale would resample twice. Without a crop the frame is fitted and
+        # padded, which keeps everything but wastes half a vertical screen — so a crop
+        # is the normal case whenever the aspect ratios differ.
+        if spec.crop is not None:
+            filters.append(spec.crop.to_filter())
         filters.append(
             f"scale={spec.width}:{spec.height}:force_original_aspect_ratio=decrease"
         )
@@ -181,12 +188,14 @@ def conform_plan(
     grade: Grade | None = None,
     hdr_method: str = "zscale_hable",
     shot_color_index: dict[str, int] | None = None,
+    subject_centers: dict[str, tuple[float, float] | None] | None = None,
     force: bool = False,
 ) -> ConformPlan:
     """Conform every shot in the plan. Shots sharing a spec share one intermediate."""
     out = ConformPlan()
     corrections = corrections or {}
     shot_color_index = shot_color_index or {}
+    subject_centers = subject_centers or {}
     seen: dict[str, ConformResult] = {}
 
     for shot in plan.sorted_shots():
@@ -197,11 +206,20 @@ def conform_plan(
         if shot.color.normalize != "off":
             index = shot_color_index.get(shot.id, 0)
             correction = corrections.get(shot.asset, {}).get(index)
+        video = asset.probe.video
+        crop = None
+        if video is not None:
+            source_w, source_h = video.display_size
+            crop = crop_for_shot(
+                shot, source_w, source_h, plan.format.width, plan.format.height,
+                subject_centers.get(shot.id),
+            )
         spec = ConformSpec(
             asset=asset, src_in=shot.src_in, src_out=shot.src_out,
             width=plan.format.width, height=plan.format.height, fps=plan.format.fps,
             hdr_method=hdr_method, correction=correction,
             grade=grade if shot.color.grade != "off" else None,
+            crop=crop,
         )
         key = spec.output_name()
         if key not in seen:

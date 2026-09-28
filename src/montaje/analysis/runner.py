@@ -13,6 +13,7 @@ from montaje.analysis.local.motion import MotionAnalyzer
 from montaje.analysis.local.occlusion import OcclusionAnalyzer
 from montaje.analysis.local.quality import QualityAnalyzer
 from montaje.analysis.local.shots import ShotsAnalyzer
+from montaje.analysis.local.subjects import SubjectsAnalyzer
 from montaje.analysis.local.vad import VadAnalyzer
 from montaje.config import Config
 from montaje.index.store import Store
@@ -31,7 +32,7 @@ SERIAL_ANALYZERS = {"asr"}
 # Order matters: color_stats consumes shots, and asr consumes vad.
 DEFAULT_ANALYZERS = [
     "shots", "quality", "occlusion", "motion",
-    "audio_events", "vad", "asr", "loudness", "color_stats",
+    "audio_events", "vad", "asr", "loudness", "color_stats", "subjects",
 ]
 
 
@@ -46,6 +47,7 @@ def build_analyzers(cfg: Config) -> dict:
         "asr": AsrAnalyzer(cfg.asr),
         "loudness": LoudnessAnalyzer(),
         "color_stats": ColorStatsAnalyzer(),
+        "subjects": SubjectsAnalyzer(),
     }
 
 

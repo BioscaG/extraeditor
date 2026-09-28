@@ -389,3 +389,71 @@ appear twice in the edit — and the viewer hears it twice, so the subtitle must
 twice. What is *not* legitimate is the same line appearing as two overlapping cues, which
 happens because cue padding extends one cue into the next shot's copy of it. Collapsing
 all repeats was the first attempt and would have dropped real dialogue.
+
+---
+
+## 2026-09-28 — Reframing: crop onto the subject, held still per shot
+
+**Decision:** the conform crops each shot to the output aspect ratio, positioned on the
+subject the `subjects` analyzer found, falling back to a centre crop when nothing is
+confident. The crop is computed once per shot and does not move within it.
+
+**Alternatives:** letterbox (what the conform did before); centre crop; a crop that
+tracks the subject frame by frame.
+
+**Evidence:** cropping 16:9 into 9:16 discards two thirds of the picture, so *where* the
+window sits is the most consequential single decision in a vertical edit. Letterboxing
+wastes half the screen; a centre crop puts the subject out of frame whenever they are not
+dead centre, which on handheld footage is most of the time. Measured on 16:9 clips with a
+subject at x=0.20 and x=0.78, the crop moves to x=118 and x=1194 against a centre of 656 —
+in both cases a centre crop would have missed the subject entirely.
+
+Holding the crop still within a shot is deliberate: a crop that follows the subject reads
+as a security camera, while a locked frame reads as composition. Moving reframes are a
+component-level effect, not a conform-level one.
+
+The clamp on how far the crop may travel **limits** the extreme cases rather than scaling
+every offset. Scaling was the first implementation and it weakened every reframe in order
+to restrain the few that needed it.
+
+---
+
+## 2026-09-28 — Subject detection: detail + skin + relative motion, not spectral saliency
+
+**Decision:** interest is `1.0 × detail + 2.5 × skin + 1.5 × motion`, thresholded at 45%
+of the map's peak before taking a centroid. Confidence is the weighted **spatial spread**
+of what survives.
+
+**Alternatives:** spectral-residual saliency (Hou & Zhang), which was implemented first.
+
+**Evidence:** three separate findings, each from a measurement.
+
+*Spectral residual was rejected.* It assumes natural image statistics; on the
+flat-background footage available here it locked onto the FFT ringing of a rectangle
+rather than the rectangle. On a plate with a subject at x=0.85 it reported x=0.50 — no
+signal at all. A method whose domain assumption cannot be verified is not one to build the
+most visible decision in the edit on. The three replacement signals are individually
+checkable: skin tone beats a brighter white distraction, and relative motion picks a
+moving patch over a static one of equal brightness.
+
+*The map must be thresholded.* Used raw as a mass distribution, the background contributes
+at its baseline level across thousands of cells and outweighs the subject's few — a
+2300-cell background at 0.1 against a 24-cell subject at 1.0. Every centroid landed within
+0.02 of the frame centre, which looks exactly like reframing working while doing nothing.
+
+*Confidence must measure spread, not area.* Counting surviving cells rated pure random
+noise at 0.97 — higher than a clean shot of an actual subject — because grain leaves few
+cells above the cut but scatters them across the whole frame. Weighted spread rates the
+same noise at 0.00, a subject filling half the frame at 0.02, and a real subject at 0.86.
+
+---
+
+## 2026-09-28 — The builder applies the style's reframe policy
+
+**Decision:** generated shots take `reframe` from the style, not from the model default.
+
+**Evidence:** `modern-festival` specifies `policy: auto_subject`, but every generated shot
+carried the model's `center` default, so subject detection ran, produced correct centres,
+and was then ignored. The render looked plausible — the frame was filled edge to edge —
+which is what made it hard to notice: the failure mode of a mis-wired reframe is not a
+crash but a subtly worse composition.

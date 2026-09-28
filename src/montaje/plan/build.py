@@ -26,6 +26,7 @@ from montaje.models.editplan import (
     Music,
     MusicSource,
     PlanFormat,
+    Reframe,
     Section,
     Shot,
     ShotAudio,
@@ -316,6 +317,11 @@ def build_plan(
                 section=section.id,
                 snap=SnapSpec(**{"in": SnapKind.BEAT, "out": SnapKind.NONE}),
                 audio=_audio_for(candidate, has_music=bool(plan.music.edits)),
+                # The style's reframe policy, not the model default: leaving it at
+                # `center` means 16:9 footage in a 9:16 frame is cropped down the middle
+                # and people end up out of shot, which is the most visible failure a
+                # vertical edit can have.
+                reframe=_reframe_for(style),
                 intent=_intent_for(candidate, section),
             )
             # Captions only where there are actually transcribed words in the chosen
@@ -443,6 +449,13 @@ def _free_start(
     if candidate.t1 - cursor >= max(ABSOLUTE_MIN_SHOT_S, length_s * 0.6):
         return cursor
     return None
+
+
+def _reframe_for(style: Style | None) -> Reframe:
+    """The style's reframe policy, defaulting to a centre crop with no style."""
+    if style is None:
+        return Reframe()
+    return Reframe(mode=style.reframe.policy, ease=style.reframe.ease)
 
 
 def _audio_for(candidate: Candidate, has_music: bool) -> ShotAudio:
