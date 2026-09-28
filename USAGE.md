@@ -1,0 +1,99 @@
+# Using montaje
+
+The build specification is `README.md`; this is how to actually run what exists.
+
+## Install
+
+```bash
+uv python install 3.12
+uv venv --python 3.12
+uv pip install -e .
+
+npm install          # Remotion + the craft library's peer deps, hoisted to the repo root
+```
+
+**ffmpeg.** montaje discovers ffmpeg at runtime and probes its filters. Homebrew's
+default bottle ships without `libzimg` and `libplacebo`, which are the only filters that
+can correctly tone-map HLG/PQ to SDR — without them HDR footage falls back to a
+hardware or naive path. For the full colour pipeline:
+
+```bash
+brew install ffmpeg-full   # keg-only; does not replace your existing ffmpeg
+```
+
+Check what was found and what it can do:
+
+```bash
+python -c "from montaje import ffmpeg; print(ffmpeg.capability_report())"
+```
+
+**Optional.** `uv pip install mlx-whisper` for word-level transcription on Apple
+Silicon (or `faster-whisper` elsewhere). Without it, captions have no words and are
+silently omitted rather than rendered empty.
+
+## A full pass
+
+```bash
+montaje init festival-2026
+# edit projects/festival-2026/project.yaml: goal, format, duration, music, style
+
+montaje source add folder ~/Movies/festival
+montaje ingest                    # probe, proxies, HDR→SDR, audio, thumbnails
+montaje report                    # VFR, HDR mix, degraded assets, failures
+montaje analyze                   # shots, quality, occlusion, motion, audio, VAD, ASR, colour
+montaje plan                      # baseline EditPlan from the music structure
+montaje render --quality draft    # rails, validate, conform, mix, compose, mux
+montaje export all                # SRT + OTIO + FCPXML referencing the originals
+```
+
+Every command is idempotent and resumable: re-running `ingest` or `analyze` skips work
+whose inputs and parameters have not changed.
+
+## Directing it with an agent
+
+```bash
+montaje mcp --project festival-2026
+```
+
+This exposes 19 tools over stdio (`montaje debug tools` lists them). Point Claude Code at
+it and the model becomes the director: it surveys the footage, builds a plan, reads the
+rhythm report, and renders. The rails still run underneath whatever it decides.
+
+## Inspecting things
+
+```bash
+montaje debug rhythm              # cut-to-beat offsets, pacing vs the style, densities
+montaje debug events <asset_id>   # raw analyzer output
+montaje debug tonemap <clip.mov>  # side-by-side HDR→SDR stills, to decide the method
+montaje library list              # components with their intent, and licensed SFX
+montaje library gallery           # render every component × preset, plus an HTML index
+```
+
+Everything intermediate is a file you can open — that is deliberate (§2.9). The most
+useful ones:
+
+| path | what it is |
+|---|---|
+| `projects/<slug>/report.md` | what the footage actually is |
+| `projects/<slug>/plans/plan_v###.json` | the edit, as data |
+| `projects/<slug>/plans/rhythm_v###.md` | why it feels the way it does |
+| `projects/<slug>/cache/<asset>/analysis/` | every analyzer's output, versioned |
+| `projects/<slug>/renders/` | the video |
+| `projects/<slug>/exports/` | timelines, captions, stems |
+
+## What is built
+
+| README section | state |
+|---|---|
+| §6–8 workspace, folder source, ingest, HDR | done |
+| §9 local analysis | shots, quality, occlusion, motion, audio events, VAD, ASR, loudness, colour stats. Missing: embeddings, subjects, sync, dedupe, separation |
+| §10 semantic clip logs | not started |
+| §13–15 craft library, tokens, colour pipeline | tokens and 6 components; catalogue is a fraction of §13.3 |
+| §14 music editing, mix, SFX | beats, structure, fit-to-duration, spotting, mix, stems. Missing: lyrics, generation |
+| §17–18 EditPlan, ops, rails, rhythm | done |
+| §19 render and exports | done, except the overlay alpha track is untested against Resolve |
+| §16 director | tools and MCP server; no built-in loop yet |
+| §20 critic, §21 workshop, §22 style learning | not started |
+| §7.2 Apple Photos bridge | not started |
+
+`DECISIONS.md` records every non-obvious choice and the evidence for it.

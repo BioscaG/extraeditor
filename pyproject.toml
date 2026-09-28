@@ -10,6 +10,7 @@ dependencies = [
     "rich>=13.7",
     "pyyaml>=6.0",
     "numpy>=1.26",
+    "opentimelineio>=0.17",
 ]
 
 [project.optional-dependencies]

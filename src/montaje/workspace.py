@@ -113,6 +113,23 @@ class Workspace:
             sources.append(entry)
         atomic_write_text(self.sources_yaml, yaml.safe_dump({"sources": sources}, sort_keys=False))
 
+    def plan_paths(self) -> list[Path]:
+        return sorted(self.plans_dir.glob("plan_v*.json"))
+
+    def next_plan_version(self) -> int:
+        """One past the highest plan on disk.
+
+        A rebuilt plan must not reuse a version number: a stale higher version left by
+        an earlier session would still be the "latest" and would silently shadow the
+        rebuild, which is how an edit ends up rendering from a plan nobody asked for.
+        """
+        highest = 0
+        for path in self.plan_paths():
+            digits = path.stem.removeprefix("plan_v")
+            if digits.isdigit():
+                highest = max(highest, int(digits))
+        return highest + 1
+
     @classmethod
     def find(cls, name_or_path: str, projects_root: Path | None = None) -> Workspace:
         p = Path(name_or_path)

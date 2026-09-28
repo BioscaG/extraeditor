@@ -56,6 +56,7 @@ class Candidate:
     motion: float = 0.0
     direction: str = "static"
     has_speech: bool = False
+    has_words: bool = False
     energy: int = 3
     aesthetic: int = 3
     us_present: bool = False
@@ -89,6 +90,22 @@ class BuildInputs:
     style: Style | None = None
     music_asset_id: str | None = None
 
+    def word_spans(self, asset_id: str) -> list[tuple[float, float]]:
+        return [
+            (e.t0, e.t1) for e in self.events.get(asset_id, [])
+            if e.analyzer.startswith("asr") and e.type == "word"
+        ]
+
+    def has_words_in(self, asset_id: str, t0: float, t1: float) -> bool:
+        """Whether any transcribed word falls in a range.
+
+        Checked against the *chosen* shot range, not the candidate span it came from:
+        a clip with one spoken line yields usable spans covering the whole clip, so
+        gating on the span captioned every sub-range taken from it — 43 of 51 shots
+        claimed captions when only 18 had anything to show.
+        """
+        return any(b > t0 and a < t1 for a, b in self.word_spans(asset_id))
+
 
 def collect_candidates(inputs: BuildInputs) -> list[Candidate]:
     """Every usable range across all assets, annotated from the analysis."""
@@ -107,6 +124,7 @@ def collect_candidates(inputs: BuildInputs) -> list[Candidate]:
         metrics = [e for e in events if e.analyzer.startswith("quality") and e.type == "metrics"]
         motion = [e for e in events if e.analyzer.startswith("motion")]
         speech = [e for e in events if e.analyzer.startswith("vad") and e.type == "speech"]
+        words = [e for e in events if e.analyzer.startswith("asr") and e.type == "word"]
 
         for span in usable:
             if span.t1 - span.t0 < MIN_SHOT_S:
@@ -126,6 +144,7 @@ def collect_candidates(inputs: BuildInputs) -> list[Candidate]:
                 motion=sum(magnitudes) / len(magnitudes),
                 direction=_dominant(directions),
                 has_speech=any(s.t1 > span.t0 and s.t0 < span.t1 for s in speech),
+                has_words=any(w.t1 > span.t0 and w.t0 < span.t1 for w in words),
                 energy=log.energy if log else 3,
                 aesthetic=log.aesthetic if log else 3,
                 us_present=log.people.us_present if log else False,
@@ -299,7 +318,11 @@ def build_plan(
                 audio=_audio_for(candidate, has_music=bool(plan.music.edits)),
                 intent=_intent_for(candidate, section),
             )
-            if candidate.has_speech and style and style.text.captions:
+            # Captions only where there are actually transcribed words in the chosen
+            # range: a caption component with nothing to show renders empty, so claiming
+            # it in the plan is a lie the validator then has to catch.
+            if inputs.has_words_in(candidate.asset_id, src_in, src_out) \
+                    and style and style.text.captions:
                 shot.captions = Captions(id=_versioned(style.text.captions), words="auto")
                 # Speech needs room to breathe: hold the shot to the spoken range.
                 shot.snap = SnapSpec(**{"in": SnapKind.WORD_START, "out": SnapKind.WORD_END})
@@ -346,6 +369,27 @@ def fix_speech_cuts(plan: EditPlan) -> None:
             )
             previous.audio.l_cut_frames = 0
             current.audio.j_cut_frames = max(0, min(current.audio.j_cut_frames, available))
+
+
+def drop_empty_captions(plan: EditPlan, word_spans: dict[str, list[tuple[float, float]]]) -> int:
+    """Remove captions from shots whose range no longer contains any word.
+
+    Must run after the rails: snapping and gap-closing move a shot's in and out points,
+    which can shift a short shot off the words it was captioned for. A caption component
+    with nothing to show renders empty, so the plan should stop claiming it. Returns how
+    many were removed.
+    """
+    removed = 0
+    for shot in plan.shots:
+        if shot.captions is None:
+            continue
+        spans = word_spans.get(shot.asset)
+        if spans is None:
+            continue  # no ASR for this asset; leave the plan's intent alone
+        if not any(b > shot.src_in and a < shot.src_out for a, b in spans):
+            shot.captions = None
+            removed += 1
+    return removed
 
 
 # Kept as a private alias so the builder's own call site stays readable.

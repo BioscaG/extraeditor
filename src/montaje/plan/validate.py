@@ -39,6 +39,7 @@ class ValidationContext:
     assets: dict[str, Asset] = field(default_factory=dict)
     usable_spans: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     speech_spans: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
+    word_spans: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     beats: list[float] = field(default_factory=list)
     downbeats: list[float] = field(default_factory=list)
     stable_components: set[str] = field(default_factory=set)
@@ -56,6 +57,7 @@ class ValidationContext:
     ) -> ValidationContext:
         usable: dict[str, list[tuple[float, float]]] = {}
         speech: dict[str, list[tuple[float, float]]] = {}
+        words: dict[str, list[tuple[float, float]]] = {}
         for asset_id, evs in events.items():
             for e in evs:
                 name = e.analyzer.split("@")[0]
@@ -63,7 +65,10 @@ class ValidationContext:
                     usable.setdefault(asset_id, []).append((e.t0, e.t1))
                 elif name == "vad" and e.type == "speech":
                     speech.setdefault(asset_id, []).append((e.t0, e.t1))
-        return cls(assets=assets, usable_spans=usable, speech_spans=speech, **kwargs)
+                elif name == "asr" and e.type == "word":
+                    words.setdefault(asset_id, []).append((e.t0, e.t1))
+        return cls(assets=assets, usable_spans=usable, speech_spans=speech,
+                   word_spans=words, **kwargs)
 
 
 def _overlaps(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -91,6 +96,7 @@ def validate(plan: EditPlan, ctx: ValidationContext) -> list[Problem]:
     problems += _check_sfx(plan, ctx, fps)
     problems += _check_audio(plan, shots, ctx)
     problems += _check_density(plan, fps, ctx)
+    problems += _check_text(plan, shots, ctx)
 
     problems.sort(key=lambda p: 0 if p.severity == Severity.ERROR else 1)
     return problems
@@ -296,3 +302,39 @@ def errors(problems: list[Problem]) -> list[Problem]:
 
 def warnings(problems: list[Problem]) -> list[Problem]:
     return [p for p in problems if p.severity == Severity.WARNING]
+
+
+def _check_text(plan: EditPlan, shots: list[Shot], ctx: ValidationContext) -> list[Problem]:
+    """Captions must have something to say, and text must not stack on text (§18.2)."""
+    out: list[Problem] = []
+    fps = plan.format.fps
+
+    for shot in shots:
+        if shot.captions is None:
+            continue
+        words = ctx.word_spans.get(shot.asset)
+        if words is None:
+            continue  # no ASR at all; nothing to check against
+        if not any(_overlaps((shot.src_in, shot.src_out), w) > 0 for w in words):
+            out.append(Problem(Severity.WARNING, "captions_without_words",
+                               "captions are set but no transcribed words fall in this "
+                               "range, so nothing will render", shot.id))
+
+    # Two text elements in the same part of the frame at the same time are unreadable.
+    text_overlays = [
+        o for o in plan.overlays
+        if o.component.startswith("text.") or o.component.startswith("overlay.")
+    ]
+    for shot in shots:
+        if shot.captions is None:
+            continue
+        start = shot.timeline_in
+        end = start + shot.timeline_duration_frames(fps)
+        for overlay in text_overlays:
+            if overlay.from_frame < end and start < overlay.to_frame:
+                out.append(Problem(Severity.WARNING, "text_collision",
+                                   f"captions run under overlay {overlay.id} "
+                                   f"({overlay.component}); two text elements at once "
+                                   f"are hard to read", shot.id))
+                break
+    return out

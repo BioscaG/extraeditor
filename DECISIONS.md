@@ -311,3 +311,81 @@ filesystem path is looked up *inside* the bundle and 404s — every frame failed
 intermediates into `public/` would duplicate ProRes files; `--public-dir` points at them
 where they already are. Also pinned `zod` to the exact version Remotion requires, since a
 mismatch produces "unclear errors" by its own warning's admission.
+
+---
+
+## 2026-09-28 — ASR runs only on VAD speech, and runs serially
+
+**Decision:** `AsrAnalyzer` transcribes only the ranges `vad` marked as speech, discards
+segments the model itself is unsure about, and is listed in `SERIAL_ANALYZERS` so it never
+runs from the thread pool.
+
+**Evidence:** two separate failure modes, both severe.
+
+Gating on VAD is what §28 warns about: Whisper invents fluent sentences over music and
+crowd noise, and those inventions become on-screen captions. Transcribing only inside VAD
+segments and rejecting low-confidence output means a wrong caption needs two independent
+failures.
+
+The serial requirement was found the hard way: run from a `ThreadPoolExecutor`, MLX
+inference **terminates the interpreter without raising**. The command exited 0, printed
+nothing, wrote no events, and the only trace was a leaked-semaphore warning. Running the
+same analyzer directly worked perfectly, which is what made it diagnosable.
+
+---
+
+## 2026-09-28 — Captions are gated on words in the *chosen* range, then repaired
+
+**Decision:** the builder only attaches captions where transcribed words fall inside the
+shot's own `[src_in, src_out)`; `drop_empty_captions` removes any that the rails then
+shifted off their words.
+
+**Evidence:** gating on the *candidate span* instead captioned 43 of 51 shots when only
+18 had anything to show — a clip with one spoken line produces usable spans covering the
+whole clip, so every sub-range inherited the speech flag. A caption component with no
+words renders nothing, so the plan was claiming something it could not deliver. The
+post-rails repair is needed because snapping and gap-closing move a short shot off the
+words it was chosen for.
+
+---
+
+## 2026-09-28 — A rebuilt plan takes the next version number
+
+**Decision:** `montaje plan` and `build_baseline_plan` write `next_plan_version()`, not v1.
+
+**Evidence:** `montaje plan` always wrote `plan_v001.json`, but `latest_plan()` picks the
+highest version on disk. A `plan_v002` left by an earlier session therefore shadowed every
+subsequent rebuild — the render used a plan nobody had asked for, and the missing
+transitions it produced looked like a bug in the transition code rather than in version
+selection.
+
+---
+
+## 2026-09-28 — OTIO is built through the library, and transitions map to `Transition`
+
+**Decision:** `build_otio` constructs `otio.schema` objects rather than writing OTIO's
+JSON by hand. A plan's `transition_in` becomes an `otio.schema.Transition`; a genuine
+timeline overlap trims the outgoing clip instead.
+
+**Alternatives:** hand-written JSON (no dependency), which is what was tried first.
+
+**Evidence:** the hand-written form failed OTIO's own reader with a bare
+`KeyError: media_references` — `Clip.2` needs the plural field, and OTIO's writer cannot
+produce a file its reader rejects. On transitions: montaje's plan represents a designed
+transition as an *annotation on a butt cut*, with the renderer deriving the overlap, and
+OTIO's Transition has exactly that model (it borrows from its neighbours without changing
+their durations), so the two map across directly. Appending transition-overlapped clips
+back to back instead inflated a 42.1 s edit to 45.5 s in the export.
+
+---
+
+## 2026-09-28 — Subtitles collapse overlapping duplicates, but not genuine repeats
+
+**Decision:** `cues_from_plan` merges consecutive cues with near-identical text **only**
+when they overlap in time.
+
+**Evidence:** a reused source range reuses its audio, so the same line can legitimately
+appear twice in the edit — and the viewer hears it twice, so the subtitle must show it
+twice. What is *not* legitimate is the same line appearing as two overlapping cues, which
+happens because cue padding extends one cue into the next shot's copy of it. Collapsing
+all repeats was the first attempt and would have dropped real dialogue.

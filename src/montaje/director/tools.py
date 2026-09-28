@@ -60,7 +60,7 @@ class Session:
         return Store(self.ws.db_path)
 
     def latest_plan(self) -> EditPlan | None:
-        plans = sorted(self.ws.plans_dir.glob("plan_v*.json"))
+        plans = self.ws.plan_paths()
         if not plans:
             return None
         return EditPlan.model_validate_json(plans[-1].read_text())
@@ -478,6 +478,7 @@ def build_baseline_plan(session: Session, title: str | None = None,
         target_s=target_s or (brief.duration.target_s if brief.duration else None),
     )
     plan = apply_spotting(plan, structure=session.structure, style=style)
+    plan.version = session.ws.next_plan_version()
     path = session.write_plan(plan)
     return {
         "version": plan.version,

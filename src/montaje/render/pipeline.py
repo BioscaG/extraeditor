@@ -19,7 +19,7 @@ from montaje.models.asset import Asset
 from montaje.models.editplan import EditPlan
 from montaje.music.beats import BeatGrid
 from montaje.music.structure import MusicStructure
-from montaje.plan.build import fix_speech_cuts
+from montaje.plan.build import drop_empty_captions, fix_speech_cuts
 from montaje.plan.rails import RailContext, apply_rails
 from montaje.plan.rhythm import build_rhythm_report
 from montaje.plan.snap import SnapCandidates
@@ -111,6 +111,9 @@ def render(
         # snapping moves cut points and may drop shots, which changes where SFX belong
         # and which speech shots end up adjacent.
         fix_speech_cuts(plan)
+        dropped_captions = drop_empty_captions(plan, _word_spans(events))
+        if dropped_captions:
+            result.rails_summary += f"; {dropped_captions} empty captions dropped"
         plan = apply_spotting(plan, structure=structure, style=style)
 
     # -- validation ------------------------------------------------------------------
@@ -273,4 +276,17 @@ def _words_for(plan: EditPlan, events: dict[str, list]) -> dict[str, list[dict]]
             for w in words
             if w.data.get("text")
         ]
+    return out
+
+
+def _word_spans(events: dict[str, list]) -> dict[str, list[tuple[float, float]]]:
+    """ASR word ranges per asset, for post-rails caption repair."""
+    out: dict[str, list[tuple[float, float]]] = {}
+    for asset_id, evs in events.items():
+        spans = [
+            (e.t0, e.t1) for e in evs
+            if e.analyzer.startswith("asr") and e.type == "word"
+        ]
+        if spans:
+            out[asset_id] = spans
     return out

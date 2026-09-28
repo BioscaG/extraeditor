@@ -175,6 +175,17 @@ def style_list() -> None:
         console.print(name)
 
 
+@app.command()
+def export(
+    what: str = typer.Argument("all", help="all | srt | otio | fcpxml | overlays | stems"),
+    project: str | None = PROJECT_OPT,
+) -> None:
+    """Export editable timelines, captions, graphics with alpha and audio stems."""
+    from montaje.cli_plan import cmd_export
+
+    cmd_export(project, what)
+
+
 @debug_app.command("rhythm")
 def debug_rhythm(project: str | None = PROJECT_OPT) -> None:
     """Print the rhythm report for the latest plan."""

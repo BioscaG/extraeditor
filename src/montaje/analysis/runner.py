@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from montaje.analysis.local.asr import AsrAnalyzer, AsrUnavailable
 from montaje.analysis.local.audio_events import AudioEventsAnalyzer
 from montaje.analysis.local.color_stats import ColorStatsAnalyzer
 from montaje.analysis.local.loudness import LoudnessAnalyzer
@@ -22,10 +23,15 @@ from montaje.workspace import Workspace, atomic_write_text
 
 log = logging.getLogger(__name__)
 
-# Order matters: color_stats consumes shots; asr consumes vad.
+# Analyzers that must not run concurrently with themselves. `asr` uses MLX, whose
+# inference is not thread-safe: called from a pool it terminates the interpreter without
+# an exception, so the whole analysis run disappears with exit code 0 and no events.
+SERIAL_ANALYZERS = {"asr"}
+
+# Order matters: color_stats consumes shots, and asr consumes vad.
 DEFAULT_ANALYZERS = [
     "shots", "quality", "occlusion", "motion",
-    "audio_events", "vad", "loudness", "color_stats",
+    "audio_events", "vad", "asr", "loudness", "color_stats",
 ]
 
 
@@ -37,6 +43,7 @@ def build_analyzers(cfg: Config) -> dict:
         "motion": MotionAnalyzer(),
         "audio_events": AudioEventsAnalyzer(),
         "vad": VadAnalyzer(),
+        "asr": AsrAnalyzer(cfg.asr),
         "loudness": LoudnessAnalyzer(),
         "color_stats": ColorStatsAnalyzer(),
     }
@@ -85,20 +92,44 @@ def run_analysis(
         store.close()
         return lines + ["[yellow]No assets; run `montaje ingest` first.[/yellow]"]
 
+    # A missing ASR backend is not a failure: it means no captions, and a plan without
+    # them validates fine. Dropping it once here beats reporting it per asset.
+    if "asr" in names:
+        try:
+            registry["asr"] = AsrAnalyzer(cfg.asr, language=_language(ws))
+        except Exception:  # pragma: no cover - constructor is cheap and total
+            pass
+        if not _asr_available():
+            names = [n for n in names if n != "asr"]
+            lines.append(
+                "[yellow]No ASR backend (install mlx-whisper or faster-whisper); "
+                "skipping transcription, so captions will have no words.[/yellow]"
+            )
+
+    # Some analyzers cannot run concurrently: MLX inference from several threads takes
+    # the whole process down without raising, so the run simply vanishes. Those run
+    # serially after the parallel pass.
+    parallel = [n for n in names if n not in SERIAL_ANALYZERS]
+    serial = [n for n in names if n in SERIAL_ANALYZERS]
+
     # Parallelism across assets, sequential per asset so dependent analyzers see their inputs.
-    def per_asset(asset: Asset) -> list[str]:
+    def per_asset(asset: Asset, which: list[str]) -> list[str]:
         out: list[str] = []
         with Store(ws.db_path) as local_store:
-            for name in names:
-                _, n, err = run_analyzer(ws, local_store, asset, registry[name])
+            for name in which:
+                _, _, err = run_analyzer(ws, local_store, asset, registry[name])
                 if err:
                     out.append(f"[red]FAIL[/red] {asset.asset_id} {name}: {err}")
         return out
 
-    with ThreadPoolExecutor(max_workers=cfg.workers.analysis) as pool:
-        futures = [pool.submit(per_asset, a) for a in assets]
-        for fut in as_completed(futures):
-            lines.extend(fut.result())
+    if parallel:
+        with ThreadPoolExecutor(max_workers=cfg.workers.analysis) as pool:
+            futures = [pool.submit(per_asset, a, parallel) for a in assets]
+            for fut in as_completed(futures):
+                lines.extend(fut.result())
+
+    for asset in assets:
+        lines.extend(per_asset(asset, serial))
 
     totals = {
         name: store.conn.execute(
@@ -114,3 +145,25 @@ def run_analysis(
 
         lines.extend(run_semantic(ws, cfg))
     return lines
+
+
+def _asr_available() -> bool:
+    from montaje.analysis.local.asr import _load_backend
+
+    try:
+        _load_backend("base")
+    except AsrUnavailable:
+        return False
+    except Exception:
+        # A backend that imports but fails to load weights is still "available"; the
+        # per-asset run will report the real error.
+        return True
+    return True
+
+
+def _language(ws: Workspace) -> str | None:
+    """The brief's language, so Whisper is not left guessing on short segments."""
+    try:
+        return ws.load_brief().language
+    except Exception:
+        return None

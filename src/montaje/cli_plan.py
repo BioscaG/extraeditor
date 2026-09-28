@@ -6,6 +6,7 @@ pipeline, which drags in numpy and the library registry.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
@@ -60,7 +61,7 @@ def load_music_context(ws: Workspace):
 
 
 def latest_plan(ws: Workspace) -> EditPlan | None:
-    plans = sorted(ws.plans_dir.glob("plan_v*.json"))
+    plans = ws.plan_paths()
     if not plans:
         return None
     return EditPlan.model_validate_json(plans[-1].read_text())
@@ -98,6 +99,7 @@ def cmd_plan(project: str | None, title: str | None, target_s: float | None) -> 
         target_s=target_s or (brief.duration.target_s if brief.duration else None),
     )
     plan = apply_spotting(plan, structure=structure, style=style)
+    plan.version = ws.next_plan_version()
 
     path = ws.plans_dir / f"plan_v{plan.version:03d}.json"
     atomic_write_text(path, plan.model_dump_json(indent=2))
@@ -188,3 +190,55 @@ def cmd_library_gallery(out: Path, width: int, height: int, aspects: str) -> Non
                              aspects=[a.strip() for a in aspects.split(",") if a.strip()])
     console.print(f"[green]Rendered[/green] {len(entries)} gallery items to {out}")
     console.print(f"Open {out / 'index.html'} to review, then `montaje library review`.")
+
+
+def cmd_export(project: str | None, what: str) -> None:
+    """Export timelines, captions, graphics and stems (§19.4)."""
+    from montaje.index.store import Store
+    from montaje.render import exports
+
+    ws = resolve_workspace(project)
+    plan = latest_plan(ws)
+    if plan is None:
+        raise typer.BadParameter("no plan found; run `montaje plan` first")
+    with Store(ws.db_path) as store:
+        assets = {a.asset_id: a for a in store.list_assets()}
+        events = {aid: store.get_events(aid) for aid in assets}
+
+    ws.exports_dir.mkdir(parents=True, exist_ok=True)
+    version = f"v{plan.version:03d}"
+    wanted = {"srt", "otio", "fcpxml"} if what == "all" else {what}
+
+    written: list[Path] = []
+    if "srt" in wanted:
+        cues = exports.cues_from_plan(plan, events)
+        written.append(exports.write_srt(cues, ws.exports_dir / f"captions_{version}.srt"))
+        console.print(f"  {len(cues)} subtitle cues")
+    if "otio" in wanted:
+        written.append(exports.export_otio(plan, assets, ws.exports_dir / f"timeline_{version}.otio"))
+    if "fcpxml" in wanted:
+        written.append(
+            exports.export_fcpxml(plan, assets, ws.exports_dir / f"timeline_{version}.fcpxml")
+        )
+    if "overlays" in wanted:
+        props_path = ws.intermediates_dir / f"picture_{version}.props.json"
+        if not props_path.exists():
+            raise typer.BadParameter(
+                f"{props_path.name} not found; run `montaje render` first"
+            )
+        written.append(exports.export_overlays(
+            json.loads(props_path.read_text()),
+            ws.exports_dir / f"overlays_{version}.mov",
+        ))
+    if "stems" in wanted:
+        stems = sorted((ws.exports_dir / "stems").glob("*.wav"))
+        if not stems:
+            raise typer.BadParameter("no stems yet; run `montaje render` first")
+        written.extend(stems)
+
+    if not written:
+        raise typer.BadParameter(
+            f"unknown export {what!r}; use all|srt|otio|fcpxml|overlays|stems"
+        )
+    for path in written:
+        console.print(f"[green]Exported[/green] {path}")
