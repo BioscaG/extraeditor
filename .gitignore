@@ -23,3 +23,4 @@ render/remotion/.remotion/
 # macOS
 .DS_Store
 tests/fixtures/generated/
+render/remotion/node_modules/
