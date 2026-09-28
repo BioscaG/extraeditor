@@ -1,0 +1,60 @@
+workers:
+  ingest: 3
+  analysis: 4
+
+proxy:
+  short_edge: 540
+  fps: 30
+  gop_s: 1
+
+hdr:
+  output: sdr
+  method: zscale_hable   # decided in M0 via `montaje debug tonemap`; see DECISIONS.md
+
+asr:
+  model: large-v3-turbo
+  no_speech_prob_max: 0.6
+  min_avg_logprob: -1.0
+
+snap:
+  beat_window_ms: 120
+  word_preroll_s: 0.08
+  word_postroll_s: 0.15
+
+rails:
+  min_shot_s: 0.3
+  loudness_lufs: -14
+  true_peak_dbtp: -1
+
+color:
+  normalize_strength: 0.7
+  match_within: [sync_group, section]
+
+semantic:
+  model: gemini-3.8-flash
+  provider_tier: paid
+  fps_short_clips: 3
+  media_resolution: low
+
+director:
+  model_iterate: claude-sonnet-5
+  model_final: claude-opus-5-5
+  max_steps: 80
+  budget_usd: 15
+
+critic:
+  model: gemini-3.8-flash
+  max_loops: 3
+
+music:
+  default_mode: generate
+  provider: elevenlabs
+  variants: 2
+  instrumental: true
+  strict_section_durations: true
+
+workshop:
+  sandbox: subprocess
+  cpu_s: 600
+  mem_gb: 8
+  network: false

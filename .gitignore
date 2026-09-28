@@ -1,0 +1,25 @@
+projects/
+build.log
+tonemap_comparison/
+library/gallery/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Remotion
+node_modules/
+render/remotion/out/
+render/remotion/.remotion/
+*.tsbuildinfo
+
+# macOS
+.DS_Store
+tests/fixtures/generated/
