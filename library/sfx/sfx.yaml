@@ -1,0 +1,121 @@
+note: "Synthesized procedurally so the license is unambiguous (\xA714.1). peak_offset_s\
+  \ is the instant of the hit, which the mixer aligns to the anchor frame. Regenerate\
+  \ with `python library/sfx/make_sfx.py`."
+sfx:
+- id: whoosh.fast
+  file: whoosh_fast.wav
+  category: whoosh
+  duration_s: 0.32
+  peak_offset_s: 0.16
+  loudness_lufs: -16.95
+  energy: high
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: whoosh.slow
+  file: whoosh_slow.wav
+  category: whoosh
+  duration_s: 0.7
+  peak_offset_s: 0.35
+  loudness_lufs: -18.04
+  energy: medium
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: whoosh.soft
+  file: whoosh_soft.wav
+  category: whoosh
+  duration_s: 0.5
+  peak_offset_s: 0.25
+  loudness_lufs: -18.53
+  energy: low
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: impact.deep
+  file: impact_deep.wav
+  category: impact
+  duration_s: 0.8
+  peak_offset_s: 0.004
+  loudness_lufs: -17.27
+  energy: high
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: impact.soft
+  file: impact_soft.wav
+  category: impact
+  duration_s: 0.45
+  peak_offset_s: 0.004
+  loudness_lufs: -17.81
+  energy: medium
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: riser.short
+  file: riser_short.wav
+  category: riser
+  duration_s: 1.0
+  peak_offset_s: 1.0
+  loudness_lufs: -20.1
+  energy: medium
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: riser.long
+  file: riser_long.wav
+  category: riser
+  duration_s: 2.4
+  peak_offset_s: 2.4
+  loudness_lufs: -20.3
+  energy: high
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: downlifter.fall
+  file: downlifter_fall.wav
+  category: downlifter
+  duration_s: 1.2
+  peak_offset_s: 0.01
+  loudness_lufs: -17.58
+  energy: medium
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: tick.soft
+  file: tick_soft.wav
+  category: tick
+  duration_s: 0.09
+  peak_offset_s: 0.002
+  loudness_lufs: -18.75
+  energy: low
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: pop.warm
+  file: pop_warm.wav
+  category: pop
+  duration_s: 0.14
+  peak_offset_s: 0.006
+  loudness_lufs: -12.91
+  energy: low
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: sub_drop.deep
+  file: sub_drop_deep.wav
+  category: sub_drop
+  duration_s: 1.6
+  peak_offset_s: 0.02
+  loudness_lufs: -9.23
+  energy: high
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: crowd_bed.murmur
+  file: crowd_bed_murmur.wav
+  category: crowd_bed
+  duration_s: 6.0
+  peak_offset_s: 3.0
+  loudness_lufs: -15.72
+  energy: low
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py
+- id: tape_stop.collapse
+  file: tape_stop_collapse.wav
+  category: tape_stop
+  duration_s: 0.8
+  peak_offset_s: 0.01
+  loudness_lufs: -8.15
+  energy: medium
+  license: CC0-1.0
+  source: synthesized by library/sfx/make_sfx.py

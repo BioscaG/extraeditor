@@ -51,6 +51,9 @@ class ComponentMeta(BaseModel):
     aspect_ratios: list[str] = Field(default_factory=lambda: ["9:16", "16:9", "1:1"])
     author: str = "human"  # human | agent
     presets: dict[str, dict] = Field(default_factory=dict)
+    # One line the director reads when choosing. Says when *not* to use it too, which
+    # is what keeps transition and SFX overuse down (§28).
+    intent: str = ""
 
     @property
     def ref(self) -> str:

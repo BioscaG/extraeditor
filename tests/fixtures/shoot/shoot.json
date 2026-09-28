@@ -1,0 +1,69 @@
+{
+  "clips": [
+    {
+      "file": "clip_01_vlog.mp4",
+      "duration_s": 8.0,
+      "motion": "static",
+      "brightness": 0.04,
+      "temperature": 5200,
+      "audio": "speech"
+    },
+    {
+      "file": "clip_02_pan_left.mp4",
+      "duration_s": 6.0,
+      "motion": "left",
+      "brightness": 0.0,
+      "temperature": 7600,
+      "audio": "crowd"
+    },
+    {
+      "file": "clip_03_pan_right.mp4",
+      "duration_s": 6.0,
+      "motion": "right",
+      "brightness": -0.02,
+      "temperature": 8200,
+      "audio": "crowd"
+    },
+    {
+      "file": "clip_04_stage.mp4",
+      "duration_s": 7.0,
+      "motion": "static",
+      "brightness": 0.02,
+      "temperature": 3200,
+      "audio": "crowd"
+    },
+    {
+      "file": "clip_05_vlog2.mp4",
+      "duration_s": 7.0,
+      "motion": "static",
+      "brightness": 0.03,
+      "temperature": 4800,
+      "audio": "speech"
+    },
+    {
+      "file": "clip_06_dance.mp4",
+      "duration_s": 6.0,
+      "motion": "right",
+      "brightness": 0.01,
+      "temperature": 6500,
+      "audio": "crowd"
+    },
+    {
+      "file": "clip_07_dark.mp4",
+      "duration_s": 5.0,
+      "motion": "static",
+      "brightness": -0.35,
+      "temperature": 6500,
+      "audio": "tone"
+    },
+    {
+      "file": "clip_08_warm.mp4",
+      "duration_s": 6.0,
+      "motion": "left",
+      "brightness": 0.05,
+      "temperature": 2900,
+      "audio": "crowd"
+    }
+  ],
+  "total_s": 51.0
+}

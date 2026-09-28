@@ -1,0 +1,53 @@
+name: modern-festival
+version: 1
+
+# Shot lengths in beats per section role. The drop cuts twice as fast as the build,
+# which is what makes the drop *feel* like a drop even before the music arrives.
+pacing:
+  avg_shot_beats:
+    intro: 2.0
+    build: 1.0
+    drop: 0.5
+    break: 1.5
+    outro: 2.0
+  # Not 1.0: a fully on-grid edit reads as mechanical. A quarter of cuts placed off
+  # the grid on purpose is what makes it feel edited by a person (§16.4).
+  on_grid_ratio: 0.75
+
+transitions:
+  palette:
+    - transition.whip_pan
+    - transition.zoom_punch
+  # Two per ten seconds. Designed transitions are punctuation, not grammar; the hard
+  # cut carries everything else.
+  max_per_10s: 2.0
+
+sfx:
+  density_max_per_10s: 3.0
+  rules: default
+
+text:
+  captions: text.captions_word_pop
+  titles: text.kinetic_title
+  stamps: false
+
+color:
+  lut: null
+  normalize_strength: 0.7
+  grain: 0.12
+
+reframe:
+  policy: auto_subject
+  ease: glide
+
+taste_notes: |
+  Hard cuts carry the edit. Save whip pans for section changes where both shots
+  already move the same way, and zoom punches for downbeats that matter.
+
+  Hold on faces and real reactions — a held reaction beats two more crowd shots.
+  Prefer shots with us in frame; stage and screen shots are punctuation between them.
+
+  Let the picture get busier where the music does: the loudest section should carry
+  the most visual energy, not just the fastest cutting.
+
+  Open on motion or a face within the first second. End on a hit, not a fade.

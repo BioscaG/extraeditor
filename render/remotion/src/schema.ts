@@ -74,7 +74,11 @@ export const sectionSchema = z.object({
 /** What the Python side resolves for each shot before invoking Remotion. */
 export const resolvedShotSchema = z.object({
   shot_id: z.string(),
-  /** Intermediate file, already colour-graded and conformed (§19.1). */
+  /**
+   * Intermediate *filename* (not a path), already colour-graded and conformed
+   * (§19.1). Resolved via `staticFile()` against the `--public-dir` the render is
+   * invoked with; an absolute path would be looked up inside the bundle and 404.
+   */
   src: z.string(),
   /**
    * Seconds of handle material at the head of the intermediate.

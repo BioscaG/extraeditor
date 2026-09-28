@@ -14,8 +14,12 @@ from montaje.workspace import Workspace
 app = typer.Typer(no_args_is_help=True, help="montaje — agentic video editor")
 source_app = typer.Typer(no_args_is_help=True, help="Manage footage sources")
 debug_app = typer.Typer(no_args_is_help=True, help="Debug utilities")
+library_app = typer.Typer(no_args_is_help=True, help="Craft library: list, gallery, review")
+style_app = typer.Typer(no_args_is_help=True, help="Styles")
 app.add_typer(source_app, name="source")
 app.add_typer(debug_app, name="debug")
+app.add_typer(library_app, name="library")
+app.add_typer(style_app, name="style")
 
 console = Console()
 
@@ -112,6 +116,86 @@ def analyze(
     summary = run_analysis(ws, cfg, only=names, semantic=semantic)
     for line in summary:
         console.print(line)
+
+
+@app.command()
+def plan(
+    project: str | None = PROJECT_OPT,
+    title: str | None = typer.Option(None, help="Concept title"),
+    target_s: float | None = typer.Option(None, "--target", help="Override target duration"),
+) -> None:
+    """Build a baseline EditPlan from the analysis and the music track."""
+    from montaje.cli_plan import cmd_plan
+
+    cmd_plan(project, title, target_s)
+
+
+@app.command()
+def render(
+    project: str | None = PROJECT_OPT,
+    quality: str = typer.Option("draft", help="draft | final"),
+    plan_ref: str = typer.Option("latest", "--plan", help="'latest' or a plan JSON path"),
+    skip_video: bool = typer.Option(False, help="Mix audio and validate without rendering picture"),
+) -> None:
+    """Render a plan: rails, validation, conform, mix, compose, mux."""
+    from montaje.cli_plan import cmd_render
+
+    if quality not in ("draft", "final"):
+        raise typer.BadParameter("quality must be draft or final")
+    cmd_render(project, quality, plan_ref, skip_video)
+
+
+@library_app.command("list")
+def library_list() -> None:
+    """List every component and SFX in the craft library."""
+    from montaje.cli_plan import cmd_library_list
+
+    cmd_library_list()
+
+
+@library_app.command("gallery")
+def library_gallery(
+    out: Path = typer.Option(Path("library/gallery"), help="Output directory"),
+    width: int = typer.Option(1080),
+    height: int = typer.Option(1920),
+    aspects: str = typer.Option("9:16", help="Comma-separated aspect ratios"),
+) -> None:
+    """Render every component × preset × aspect ratio plus an HTML index."""
+    from montaje.cli_plan import cmd_library_gallery
+
+    cmd_library_gallery(out, width, height, aspects)
+
+
+@style_app.command("list")
+def style_list() -> None:
+    """List available styles."""
+    from montaje.styles.registry import list_styles
+
+    for name in list_styles():
+        console.print(name)
+
+
+@debug_app.command("rhythm")
+def debug_rhythm(project: str | None = PROJECT_OPT) -> None:
+    """Print the rhythm report for the latest plan."""
+    from rich.markdown import Markdown
+
+    from montaje.cli_plan import latest_plan, load_music_context, resolve_workspace
+    from montaje.index.store import Store
+    from montaje.plan.rhythm import build_rhythm_report
+    from montaje.styles.registry import load_style
+
+    ws = resolve_workspace(project)
+    edit_plan = latest_plan(ws)
+    if edit_plan is None:
+        raise typer.BadParameter("no plan found; run `montaje plan` first")
+    structure, _, _ = load_music_context(ws)
+    with Store(ws.db_path) as store:
+        events = {a.asset_id: store.get_events(a.asset_id) for a in store.list_assets()}
+    report = build_rhythm_report(
+        edit_plan, structure=structure, style=load_style(edit_plan.style), events=events
+    )
+    console.print(Markdown(report.to_markdown()))
 
 
 @debug_app.command("tonemap")

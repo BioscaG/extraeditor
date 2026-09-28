@@ -215,6 +215,83 @@ def _fit_with_phrases(
     )
 
 
+@dataclass(frozen=True)
+class TimelineSection:
+    """A music section as it appears on the *edited* timeline."""
+
+    id: str
+    role: str
+    from_frame: int
+    to_frame: int
+    energy: float
+
+    @property
+    def duration_frames(self) -> int:
+        return self.to_frame - self.from_frame
+
+
+def timeline_sections(
+    structure: MusicStructure, fit: MusicFit, fps: float = 30.0, min_frames: int = 15
+) -> list[TimelineSection]:
+    """Project the track's sections through the music edit onto the timeline.
+
+    Fitting to duration removes and repeats phrases, so a section that began at 48 s
+    in the source may begin anywhere — or several times, or not at all — on the
+    timeline. Building a plan against the *source* section times instead produces an
+    edit whose structure does not match what the viewer hears, which is the whole
+    point of cutting to the music.
+
+    Adjacent fragments of the same section are merged, and fragments shorter than
+    `min_frames` are absorbed into their neighbour rather than becoming a section.
+    """
+    if not structure.sections or not fit.edits:
+        return []
+
+    fragments: list[TimelineSection] = []
+    for edit in fit.edits:
+        cursor_frame = edit.timeline_in
+        for section in structure.sections:
+            overlap_in = max(edit.src_in, section.t0)
+            overlap_out = min(edit.src_out, section.t1)
+            if overlap_out <= overlap_in:
+                continue
+            offset = overlap_in - edit.src_in
+            from_frame = cursor_frame + round(offset * fps)
+            to_frame = from_frame + round((overlap_out - overlap_in) * fps)
+            fragments.append(TimelineSection(
+                id=section.id, role=section.role,
+                from_frame=from_frame, to_frame=to_frame, energy=section.energy,
+            ))
+    fragments.sort(key=lambda f: f.from_frame)
+
+    merged: list[TimelineSection] = []
+    for fragment in fragments:
+        if merged and merged[-1].role == fragment.role and fragment.from_frame <= merged[-1].to_frame + 1:
+            previous = merged[-1]
+            merged[-1] = TimelineSection(
+                id=previous.id, role=previous.role,
+                from_frame=previous.from_frame, to_frame=max(previous.to_frame, fragment.to_frame),
+                energy=max(previous.energy, fragment.energy),
+            )
+        elif merged and fragment.duration_frames < min_frames:
+            previous = merged[-1]
+            merged[-1] = TimelineSection(
+                id=previous.id, role=previous.role,
+                from_frame=previous.from_frame, to_frame=fragment.to_frame,
+                energy=previous.energy,
+            )
+        else:
+            merged.append(fragment)
+
+    # Re-number so ids are unique and ordered on the timeline: a repeated phrase can
+    # otherwise produce two sections with the same id.
+    return [
+        TimelineSection(id=f"sec{i:02d}", role=s.role, from_frame=s.from_frame,
+                        to_frame=s.to_frame, energy=s.energy)
+        for i, s in enumerate(merged)
+    ]
+
+
 def validate_joins(fit: MusicFit, structure: MusicStructure, tolerance_s: float = 0.05) -> list[str]:
     """Hard rail: every join must land on a downbeat (§18.2)."""
     problems: list[str] = []

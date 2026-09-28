@@ -13,13 +13,23 @@
  */
 
 import React from "react";
-import { AbsoluteFill, OffthreadVideo, Sequence, useVideoConfig } from "remotion";
+import { AbsoluteFill, OffthreadVideo, Sequence, staticFile, useVideoConfig } from "remotion";
 import { registry, resolve } from "../../../library/components";
 import type { ComponentContext } from "../../../library/components/contract";
 import { resolve as resolveTiming } from "../../../library/tokens/timing";
 import type { ComponentRef, Edit, ResolvedShot, Shot } from "./schema";
 
 type ShotPair = { shot: Shot; resolved: ResolvedShot };
+
+/**
+ * Intermediates are referenced by filename and resolved through `staticFile`.
+ *
+ * An absolute filesystem path does not work: Remotion serves assets over HTTP from
+ * its bundle, so an absolute path is looked up *inside* the bundle directory and
+ * 404s. The render is invoked with `--public-dir` pointing at the project's
+ * intermediates directory, which makes every intermediate a static asset.
+ */
+const intermediate = (name: string): string => staticFile(name);
 
 export const EditComposition: React.FC<Edit> = (edit) => {
   const { width, height, fps } = useVideoConfig();
@@ -118,7 +128,7 @@ const ShotLayer: React.FC<{
   // playback must start there or the whole edit sits early.
   let content: React.ReactNode = (
     <OffthreadVideo
-      src={resolved.src}
+      src={intermediate(resolved.src)}
       startFrom={Math.round(resolved.head_handle_s * ctx.fps)}
       playbackRate={constantRate(shot)}
       muted
@@ -177,7 +187,7 @@ const TransitionLayer: React.FC<{
 
   const still = (pair: ShotPair, offsetFrames: number) => (
     <OffthreadVideo
-      src={pair.resolved.src}
+      src={intermediate(pair.resolved.src)}
       startFrom={Math.max(0, Math.round(pair.resolved.head_handle_s * ctx.fps) + offsetFrames)}
       muted
       style={{ width: "100%", height: "100%", objectFit: "cover" }}

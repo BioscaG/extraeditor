@@ -29,6 +29,9 @@ class RailContext:
     word_preroll_s: float = 0.08
     word_postroll_s: float = 0.15
     min_shot_s: float = 0.3
+    # Asset durations, so a snap (especially word post-roll) cannot push a shot's
+    # out-point past the end of its source file.
+    asset_durations: dict[str, float] = field(default_factory=dict)
 
     @property
     def beats(self) -> list[float]:
@@ -48,11 +51,13 @@ class RailReport:
     beat_durations_resolved: int = 0
     shots_relaid_out: int = 0
     dropped_shots: list[str] = field(default_factory=list)
+    dropped_sections: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
         return bool(self.source_snaps or self.timeline_snaps or self.dropped_shots
-                    or self.beat_durations_resolved or self.shots_relaid_out)
+                    or self.dropped_sections or self.beat_durations_resolved
+                    or self.shots_relaid_out)
 
     def summary(self) -> str:
         parts = [
@@ -62,7 +67,9 @@ class RailReport:
             f"{self.shots_relaid_out} shots relaid out",
         ]
         if self.dropped_shots:
-            parts.append(f"{len(self.dropped_shots)} dropped ({', '.join(self.dropped_shots)})")
+            parts.append(f"{len(self.dropped_shots)} shots dropped")
+        if self.dropped_sections:
+            parts.append(f"{len(self.dropped_sections)} sections emptied")
         return "; ".join(parts)
 
 
@@ -109,7 +116,42 @@ def apply_rails(plan: EditPlan, ctx: RailContext) -> tuple[EditPlan, RailReport]
     out.shots = keep
 
     _snap_and_relayout_timeline(out, ctx, report)
+    _relayout_sections(out, report)
     return out, report
+
+
+def _relayout_sections(plan: EditPlan, report: RailReport) -> None:
+    """Move the concept's section boundaries onto the relaid-out timeline.
+
+    Sections are timeline positions, so the rails own them just as much as the shots.
+    Leaving them at their pre-rails frames makes everything that reads them wrong:
+    SFX spotted at a section boundary land past the end of a shortened timeline, and
+    the rhythm report attributes shots to the wrong section.
+    """
+    fps = plan.format.fps
+    if not plan.concept.sections:
+        return
+    by_section: dict[str, list[tuple[int, int]]] = {}
+    for shot in plan.sorted_shots():
+        if shot.section is None:
+            continue
+        start = shot.timeline_in
+        by_section.setdefault(shot.section, []).append(
+            (start, start + shot.timeline_duration_frames(fps))
+        )
+
+    end_of_timeline = plan.timeline_end_frame()
+    kept = []
+    for section in plan.concept.sections:
+        spans = by_section.get(section.id)
+        if not spans:
+            # A section whose every shot was dropped is no longer a section.
+            report.dropped_sections.append(section.id)
+            continue
+        section.from_frame = min(s for s, _ in spans)
+        section.to_frame = min(end_of_timeline, max(e for _, e in spans))
+        kept.append(section)
+    plan.concept.sections = kept
 
 
 def _snap_shot_source(shot: Shot, ctx: RailContext, report: RailReport) -> None:
@@ -122,6 +164,12 @@ def _snap_shot_source(shot: Shot, ctx: RailContext, report: RailReport) -> None:
         shot.src_out, shot.snap.out, cands,
         word_preroll_s=ctx.word_preroll_s, word_postroll_s=ctx.word_postroll_s,
     )
+    # Clamp to the file: word post-roll in particular pushes the out-point past the
+    # last word, which on a clip that ends mid-sentence is past the end of the file.
+    duration = ctx.asset_durations.get(shot.asset)
+    if duration is not None:
+        new_out = min(new_out, duration)
+        new_in = max(0.0, min(new_in, duration - ctx.min_shot_s))
     # A snap that would invert or empty the range is not applied.
     if new_out - new_in < ctx.min_shot_s:
         return
@@ -140,22 +188,34 @@ def _snap_shot_source(shot: Shot, ctx: RailContext, report: RailReport) -> None:
 def _snap_and_relayout_timeline(plan: EditPlan, ctx: RailContext, report: RailReport) -> None:
     """Snap each shot's start to the grid where asked, then close gaps and overlaps.
 
-    Shots are laid out head to tail in their existing order. The grid snap is applied
-    to the position the shot *would* take, so a snap moves the whole tail of the
-    timeline rather than silently overlapping the next shot.
+    Shots are laid out head to tail in their existing order. Two subtleties:
+
+    - a grid snap only ever moves a shot *forward*, because pulling it back would
+      overlap its predecessor;
+    - moving it forward opens a gap, which would render as black frames. The gap is
+      closed by **extending the previous shot** into its handle material rather than
+      by leaving it or abandoning the snap. Where no material is available, the snap
+      is abandoned instead.
     """
     fps = plan.format.fps
     shots = plan.sorted_shots()
     cursor = 0
-    for shot in shots:
+    for index, shot in enumerate(shots):
         target = cursor
         if shot.snap.in_ in (SnapKind.BEAT, SnapKind.DOWNBEAT, SnapKind.BAR):
             snapped = snap_timeline_frame(
                 cursor, shot.snap.in_, fps, ctx.beats, ctx.downbeats,
                 window_ms=ctx.beat_window_ms,
             )
-            # Only ever move forward: pulling a shot back would overlap its predecessor.
-            target = max(cursor, snapped)
+            candidate = max(cursor, snapped)
+            gap = candidate - cursor
+            if gap > 0 and index > 0:
+                if _extend(shots[index - 1], gap, fps, ctx):
+                    target = candidate
+                # else: keep `target = cursor` and let the shot sit off the grid,
+                # which the rhythm report will show as an off-grid cut.
+            else:
+                target = candidate
             if target != cursor:
                 report.timeline_snaps.append(
                     f"{shot.id} frame {cursor}→{target} ({shot.snap.in_.value})"
@@ -165,3 +225,31 @@ def _snap_and_relayout_timeline(plan: EditPlan, ctx: RailContext, report: RailRe
             shot.timeline_in = target
         cursor = target + shot.timeline_duration_frames(fps)
     plan.shots = shots
+
+
+def _extend(shot: Shot, frames: int, fps: float, ctx: RailContext) -> bool:
+    """Lengthen a shot by exactly `frames` timeline frames. True if applied.
+
+    Works in frames, not seconds: adding `frames / fps` to `src_out` and letting
+    `timeline_duration_frames` round the result can land one frame either side of the
+    target, which shows up as a one-frame overlap with the following shot. The new
+    out-point is therefore searched for and verified against the frame count.
+    """
+    if frames <= 0:
+        return True
+    target_frames = shot.timeline_duration_frames(fps) + frames
+    duration = ctx.asset_durations.get(shot.asset)
+    original = shot.src_out
+    # Start from the arithmetic guess and nudge by single frame-steps until the
+    # rounded timeline length matches exactly.
+    guess = shot.src_in + target_frames / fps
+    step = 1.0 / (fps * 4)
+    for offset in (0, 1, -1, 2, -2):
+        candidate = guess + offset * step
+        if candidate <= shot.src_in or (duration is not None and candidate > duration):
+            continue
+        shot.src_out = round(candidate, 4)
+        if shot.timeline_duration_frames(fps) == target_frames:
+            return True
+    shot.src_out = original
+    return False
