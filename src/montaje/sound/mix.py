@@ -23,6 +23,13 @@ from montaje.models.editplan import AudioMode, EditPlan
 DUCK_ATTACK_S = 0.15
 DUCK_RELEASE_S = 0.45
 
+# Extra headroom left below the requested true-peak ceiling. The master is muxed as AAC,
+# and lossy encoding overshoots the peaks of the PCM it was given: a mix limited to exactly
+# -1.0 dBTP measured -0.5 dBTP in the finished MP4, which the output auto-checks caught.
+LOSSY_ENCODE_HEADROOM_DB = 1.0
+# How close the measured loudness must land before the second gain pass stops iterating.
+LOUDNESS_PRECISION_LU = 0.3
+
 
 @dataclass
 class ClipAudio:
@@ -227,10 +234,28 @@ def build_graph(spec: MixSpec, export_stems: bool = False) -> tuple[list[str], l
     return inputs, steps, stems
 
 
-def render_mix(spec: MixSpec, dest: Path, stems_dir: Path | None = None) -> dict:
-    """Render the master mix (and stems), then normalize loudness in a second pass."""
+def render_mix(
+    spec: MixSpec,
+    dest: Path,
+    stems_dir: Path | None = None,
+    *,
+    lossy_output: bool = True,
+    max_passes: int = 3,
+) -> dict:
+    """Render the master mix (and stems), then normalize loudness.
+
+    Loudness is applied as a measured fixed gain rather than by a single-pass `loudnorm`,
+    which is a dynamic normalizer and pumps under a music bed. The gain is then *iterated*:
+    the output limiter pulls peaks down, which pulls loudness down with them, so one pass
+    reliably undershoots — the first version landed at -15.6 LUFS against a -14.0 target.
+
+    `lossy_output` leaves headroom below the true-peak ceiling because the master is muxed
+    as AAC and lossy encoding overshoots.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     inputs, steps, stems = build_graph(spec, export_stems=stems_dir is not None)
+
+    ceiling = spec.true_peak_dbtp - (LOSSY_ENCODE_HEADROOM_DB if lossy_output else 0.0)
 
     raw = dest.with_suffix(".raw.wav")
     args = ["-y", "-v", "error", *inputs, "-filter_complex", ";".join(steps),
@@ -242,27 +267,46 @@ def render_mix(spec: MixSpec, dest: Path, stems_dir: Path | None = None) -> dict
                      "-ar", str(spec.sample_rate), str(stems_dir / f"{name}.wav")]
     ffmpeg.run(args)
 
-    # Pass 2: measure, then apply one fixed gain. A single-pass loudnorm is dynamic
-    # and pumps under a music bed.
-    measured = measure_loudness(raw)
-    integrated = measured.get("integrated_lufs", spec.target_lufs)
-    if integrated == float("-inf"):
-        gain_db = 0.0
+    source = raw
+    total_gain = 0.0
+    first_measured: float | None = None
+    passes = 0
+
+    for _ in range(max_passes):
+        measured = measure_loudness(source).get("integrated_lufs")
+        if measured is None or measured == float("-inf"):
+            break
+        if first_measured is None:
+            first_measured = measured
+        error = spec.target_lufs - measured
+        if abs(error) <= LOUDNESS_PRECISION_LU and passes > 0:
+            break
+        tmp = dest.with_suffix(f".pass{passes}.wav")
+        ffmpeg.run([
+            "-y", "-v", "error", "-i", str(source),
+            "-af", f"volume={_db(error)},alimiter=limit={ceiling:.2f}dB:level=disabled",
+            "-c:a", "pcm_s24le", "-ar", str(spec.sample_rate), str(tmp),
+        ])
+        if source is not raw:
+            source.unlink(missing_ok=True)
+        source = tmp
+        total_gain += error
+        passes += 1
+
+    if source is raw:
+        raw.replace(dest)
     else:
-        gain_db = spec.target_lufs - integrated
-    tmp = dest.with_suffix(".tmp.wav")
-    ffmpeg.run([
-        "-y", "-v", "error", "-i", str(raw),
-        "-af", f"volume={_db(gain_db)},alimiter=limit={spec.true_peak_dbtp:.2f}dB:level=disabled",
-        "-c:a", "pcm_s24le", "-ar", str(spec.sample_rate), str(tmp),
-    ])
-    tmp.replace(dest)
-    raw.unlink(missing_ok=True)
+        source.replace(dest)
+        raw.unlink(missing_ok=True)
+    for leftover in dest.parent.glob(f"{dest.stem}.pass*.wav"):
+        leftover.unlink(missing_ok=True)
 
     final = measure_loudness(dest)
     return {
-        "measured_lufs": integrated,
-        "applied_gain_db": round(gain_db, 3),
+        "measured_lufs": first_measured,
+        "applied_gain_db": round(total_gain, 3),
+        "passes": passes,
+        "ceiling_dbtp": round(ceiling, 2),
         "final_lufs": final.get("integrated_lufs"),
         "final_true_peak_dbtp": final.get("true_peak_dbtp"),
         "stems": sorted(stems),

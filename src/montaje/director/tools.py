@@ -652,6 +652,39 @@ def render_preview(session: Session, quality: str = "draft") -> dict[str, Any]:
     }
 
 
+def autocheck_preview(session: Session, quality: str = "draft") -> dict[str, Any]:
+    """Automatic checks on the most recent render (§20).
+
+    These look at the *file*, not the plan: black runs, frozen video, loudness and true peak
+    after encoding, and whether bright high-contrast detail sits outside the safe area. They
+    cannot tell you whether the edit is any good — that is your job — but they catch defects
+    no amount of plan validation can see.
+    """
+    from montaje.critic.autochecks import run_autochecks
+
+    plan = session.latest_plan()
+    name = "preview" if quality == "draft" else "final"
+    candidates = sorted(session.ws.renders_dir.glob(f"{name}_v*.mp4"))
+    if not candidates:
+        return {"error": f"no {name} render yet; call render_preview first"}
+    report = run_autochecks(
+        candidates[-1],
+        expected_duration_s=(
+            plan.timeline_end_frame() / plan.format.fps if plan else None
+        ),
+        target_lufs=session.cfg.rails.loudness_lufs,
+        true_peak_dbtp=session.cfg.rails.true_peak_dbtp,
+        aspect=session.ws.load_brief().format.aspect,
+    )
+    return {
+        "file": str(candidates[-1]),
+        "passed": report.passed,
+        "measured": report.measured,
+        "errors": [str(f) for f in report.errors],
+        "warnings": [str(f) for f in report.warnings],
+    }
+
+
 def contact_sheet(session: Session, asset_id: str, t0: float = 0.0,
                   t1: float | None = None, columns: int = 5) -> dict[str, Any]:
     """A grid of frames from a range, written to the project and returned by path."""
@@ -772,6 +805,7 @@ def tool_catalog() -> list[dict[str, str]]:
         {"name": "plan_validate", "purpose": "hard errors and warnings"},
         {"name": "rhythm_report", "purpose": "cut-to-beat, pacing, density, energy"},
         {"name": "render_preview", "purpose": "render and report rail changes"},
+        {"name": "autocheck_preview", "purpose": "automatic checks on the rendered file"},
         {"name": "write_summary", "purpose": "human-readable plan summary"},
         {"name": "ask_user", "purpose": "relay a question to the human"},
     ]

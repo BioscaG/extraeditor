@@ -653,3 +653,52 @@ punctuation.
 
 Gallery renders also revealed that `render_gallery_item` passed a relative destination while
 running with its cwd inside `render/remotion`, so output went to the wrong directory.
+
+---
+
+## 2026-09-28 — Auto-checks run on the rendered file, and found a real defect immediately
+
+**Decision:** `critic/autochecks.py` runs after every render on the muxed MP4: black runs,
+frozen video, integrated loudness, true peak, text in the unsafe zone, and duration against
+the plan. Findings are reported but never block — the file exists and is worth looking at
+even when a check fails.
+
+**Evidence:** everything else in the system validates the *plan*, and the very first
+auto-check run found a defect no plan validation could: the finished MP4 peaked at **-0.5
+dBTP against a -1.0 ceiling**. The mix was correctly limited to -1.0, but the AAC encode in
+the mux overshot the PCM it was given, which is what lossy codecs do. That is the whole
+argument for checking the output rather than the intention.
+
+---
+
+## 2026-09-28 — Loudness is iterated, and the mix leaves headroom for the encoder
+
+**Decision:** `render_mix` limits to `true_peak_dbtp - 1.0` dB when the output will be
+lossily encoded, and applies its loudness gain over up to three measure-and-correct passes.
+
+**Evidence:** two measured problems with the single-pass version.
+
+The encode headroom addresses the -0.5 dBTP finding above: 1 dB is enough for AAC's
+overshoot, and the finished file now measures -1.4 dBTP against its -1.0 ceiling.
+
+The iteration addresses undershoot. One measure-then-apply pass lands consistently quiet,
+because the output limiter pulls peaks down and takes loudness with them: the mix measured
+**-15.6 LUFS against a -14.0 target**. Measuring again after limiting and applying the
+residual converges — the same mix now lands at -14.5, inside the checks' tolerance. Not a
+dynamic `loudnorm`, which pumps under a music bed.
+
+---
+
+## 2026-09-28 — Text in the unsafe zone is detected by bimodality, not by gradient
+
+**Decision:** `check_safe_areas` flags a band when it is both bright (>5% of cells above
+225) and bimodal (>50% of cells either above 225 or below 40).
+
+**Alternatives:** mean horizontal gradient, which was the first implementation.
+
+**Evidence:** the gradient measure does not survive the downscale the check samples at. At
+96 cells wide a 20-pixel glyph becomes six cells and its mean gradient averages out to 8.8,
+below any threshold that busy footage also clears. Bimodality describes what text actually
+is — light glyphs directly against a dark scrim, with few mid-tones — and separates it
+cleanly from footage, which is continuous. The check stays a warning in every case: footage
+legitimately fills the frame, so this can only ever flag something for a human to look at.

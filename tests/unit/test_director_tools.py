@@ -269,6 +269,7 @@ def test_every_public_tool_is_catalogued():
         "confirm_convention", "library_search",
         "library_get", "sfx_search", "get_style", "build_baseline_plan", "plan_get",
         "plan_apply", "plan_validate", "rhythm_report", "render_preview",
+        "autocheck_preview",
         "write_summary", "ask_user",
     }
     assert expected == catalogued

@@ -73,4 +73,7 @@ than discovered:
   habit and you skipped this step, expect covered or dark frames in the edit.
 - **One transition per section change, chosen round-robin.** Motion matching is recorded
   in the component metadata but the baseline planner does not use it yet.
-- **The critic loop (§20) is not implemented.** Nothing watches the preview.
+- **Nothing *watches* the preview yet.** The automatic half of the critic (§20) runs on
+  every render and checks the file for black runs, frozen video, loudness, true peak and
+  text in the unsafe zone — `renders/*_checks.md`. What it cannot do is judge whether the
+  edit is any good, which is what this document is for.

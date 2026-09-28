@@ -219,6 +219,13 @@ def build_server(workspace: Workspace) -> MCPServer:
         return tools.render_preview(session, quality)
 
     @server.tool()
+    def autocheck_preview(quality: str = "draft") -> dict[str, Any]:
+        """Automatic checks on the rendered file: black runs, frozen video, loudness and
+        true peak after encoding, safe areas. Run after every render — these catch defects
+        the plan cannot express. They say nothing about whether the edit is good."""
+        return tools.autocheck_preview(session, quality)
+
+    @server.tool()
     def write_summary() -> dict[str, Any]:
         """Write a human-readable summary of the plan next to it. Do this at wrap-up."""
         return tools.write_summary(session)

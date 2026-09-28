@@ -85,7 +85,7 @@ useful ones:
 | `projects/<slug>/plans/plan_v###.json` | the edit, as data |
 | `projects/<slug>/plans/rhythm_v###.md` | why it feels the way it does |
 | `projects/<slug>/cache/<asset>/analysis/` | every analyzer's output, versioned |
-| `projects/<slug>/renders/` | the video |
+| `projects/<slug>/renders/` | the video, and `*_checks.md` — what is wrong with it |
 | `projects/<slug>/exports/` | timelines, captions, stems |
 
 ## What is built
@@ -101,7 +101,8 @@ useful ones:
 | §19 render and exports | done, except the overlay alpha track is untested against Resolve |
 | §16 director | tools and MCP server; no built-in loop yet |
 | §11–12 pattern mining and conventions | done: motifs discovered, confirmed by you, then applied |
-| §20 critic, §21 workshop, §22 style learning | not started |
+| §20 critic | auto-checks on the rendered file done; the model-based half not started |
+| §21 workshop, §22 style learning | not started |
 | §7.2 Apple Photos bridge | not started |
 
 `DECISIONS.md` records every non-obvious choice and the evidence for it.

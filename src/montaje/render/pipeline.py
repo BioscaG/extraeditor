@@ -47,6 +47,8 @@ class RenderResult:
     rails_summary: str = ""
     mix_stats: dict = field(default_factory=dict)
     intermediates_cached: int = 0
+    autocheck_path: Path | None = None
+    autocheck_findings: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -210,6 +212,28 @@ def render(
     name = "preview" if quality == "draft" else "final"
     result.video = ws.renders_dir / f"{name}_v{plan.version:03d}.mp4"
     remotion.mux(silent, result.audio, result.video)
+
+    # -- auto-checks on the rendered file (§20) ------------------------------------------
+    #
+    # Everything above validates the *plan*. These look at the output, which is the only
+    # place some defects exist at all: the very first run found the finished MP4 peaking at
+    # -0.5 dBTP against a -1.0 ceiling, because AAC encoding overshoots the PCM it is given.
+    from montaje.critic.autochecks import run_autochecks
+
+    checks = run_autochecks(
+        result.video,
+        expected_duration_s=plan.timeline_end_frame() / plan.format.fps,
+        target_lufs=cfg.rails.loudness_lufs,
+        true_peak_dbtp=cfg.rails.true_peak_dbtp,
+        aspect=brief.format.aspect,
+    )
+    result.autocheck_path = ws.renders_dir / f"{name}_v{plan.version:03d}_checks.md"
+    atomic_write_text(result.autocheck_path, checks.to_markdown())
+    result.autocheck_findings = [str(f) for f in checks.findings]
+    # Output defects are reported, not fatal: the file exists and is worth looking at even
+    # when a check fails, and the report says exactly what is wrong with it.
+    result.warnings.extend(str(f) for f in checks.warnings)
+    result.errors.extend(str(f) for f in checks.errors)
     return result
 
 

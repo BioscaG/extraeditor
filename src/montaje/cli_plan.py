@@ -142,7 +142,7 @@ def cmd_render(project: str | None, quality: str, plan_ref: str, skip_video: boo
         console.print(f"[yellow]WARN[/yellow] {w}")
     for e in result.errors:
         console.print(f"[red]ERROR[/red] {e}")
-    if result.errors:
+    if result.errors and result.video is None:
         console.print("[red]Render blocked by hard errors (§18.2).[/red]")
         raise typer.Exit(1)
 
@@ -154,6 +154,9 @@ def cmd_render(project: str | None, quality: str, plan_ref: str, skip_video: boo
         )
     if result.video:
         console.print(f"[green]Rendered[/green] {result.video}")
+    if result.autocheck_path:
+        verdict = "[red]failed[/red]" if result.errors else "[green]passed[/green]"
+        console.print(f"Auto-checks {verdict}: {result.autocheck_path}")
     console.print(f"Rhythm report: {result.rhythm_path}")
 
 
